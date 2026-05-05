@@ -1,0 +1,15 @@
+project_id  = "your-gcp-project-id"
+region      = "us-west1"
+bq_location = "US"
+
+# Override only if you want a non-default raw bucket name. Defaults to "<project_id>-raw".
+# raw_bucket_name = "us-econ-raw"
+
+# Pinned by the deploy step. Cloud Build pushes both :latest and :<SHORT_SHA>;
+# leaving this as "latest" means the Job always pulls the newest build.
+image_tag = "latest"
+
+# GitHub source for Cloud Build. The repo must already be connected to Cloud
+# Build via the GitHub App (see README bootstrap section).
+github_owner = "your-github-username"
+github_repo  = "us-econ"

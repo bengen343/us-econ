@@ -1,0 +1,20 @@
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_IMAGE_REPO}/collector:latest
+      - .
+
+images:
+  - ${_IMAGE_REPO}/collector:latest
+
+# Required when running under a user-managed service account; otherwise Cloud
+# Build defaults to writing logs to a GCS bucket and demands extra IAM.
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# _IMAGE_REPO is supplied by the trigger so the region/project stay defined
+# in one place (Terraform locals).
+substitutions:
+  _IMAGE_REPO: ""

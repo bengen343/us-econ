@@ -28,15 +28,7 @@ SCHEMA: list[bigquery.SchemaField] = [
 
 
 def collect(settings: Settings) -> LoadSpec:
-    today = date.today()
-    # if not _is_thursday(today):
-    #     _log.info(
-    #         "skipping non-release weekday",
-    #         extra={"extras": {"date": today.isoformat(), "weekday": today.strftime("%A")}},
-    #     )
-    #     return LoadSpec(table=TABLE, schema=SCHEMA, rows=[])
-
-    end_year = today.year
+    end_year = date.today().year
     start_year = end_year - LOOKBACK_YEARS
 
     rows: list[dict] = []
@@ -66,7 +58,3 @@ def collect(settings: Settings) -> LoadSpec:
         )
 
     return LoadSpec(table=TABLE, schema=SCHEMA, rows=rows)
-
-
-def _is_thursday(d: date) -> bool:
-    return d.weekday() == 3

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:api.bls.gov)",
+      "WebFetch(domain:download.bls.gov)"
+    ]
+  }
+}

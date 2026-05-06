@@ -36,12 +36,12 @@ SCHEMA: list[bigquery.SchemaField] = [
 
 def collect(settings: Settings) -> LoadSpec:
     today = date.today()
-    # if not _is_first_friday(today):
-    #     _log.info(
-    #         "skipping non-release Friday",
-    #         extra={"extras": {"date": today.isoformat(), "weekday": today.strftime("%A")}},
-    #     )
-    #     return LoadSpec(table=TABLE, schema=SCHEMA, rows=[])
+    if not _is_first_friday(today):
+        _log.info(
+            "skipping non-release Friday",
+            extra={"extras": {"date": today.isoformat(), "weekday": today.strftime("%A")}},
+        )
+        return LoadSpec(table=TABLE, schema=SCHEMA, rows=[])
 
     end_year = today.year
     start_year = end_year - LOOKBACK_YEARS

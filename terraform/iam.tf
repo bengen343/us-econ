@@ -22,6 +22,12 @@ resource "google_bigquery_dataset_iam_member" "runner_bls_editor" {
   member     = "serviceAccount:${google_service_account.runner.email}"
 }
 
+resource "google_bigquery_dataset_iam_member" "runner_claims_editor" {
+  dataset_id = google_bigquery_dataset.claims.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.runner.email}"
+}
+
 resource "google_project_iam_member" "runner_bq_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"

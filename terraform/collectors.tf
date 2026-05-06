@@ -36,3 +36,33 @@ module "bls_employment" {
     google_secret_manager_secret_iam_member.runner_bls_key_accessor,
   ]
 }
+
+module "claims" {
+  source = "./modules/cloud_run_job"
+
+  name       = "claims"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.claims"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # DOL unemployment insurance weekly claims press release drops every Thursday
+  # at 08:30 ET (06:30 MT). Cron fires Thursdays at 06:45 MT to give the PDF
+  # time to land. The doleta.gov XML archive updates the same morning; the
+  # press PDF is generally 1-4 weeks ahead of it, so both feeds are pulled per run.
+  schedule          = "45 6 * * 4"
+  schedule_timezone = "America/Denver"
+  timeout           = "600s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.claims,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_claims_editor,
+  ]
+}

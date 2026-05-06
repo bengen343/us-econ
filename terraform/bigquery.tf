@@ -16,3 +16,11 @@ resource "google_bigquery_dataset" "claims" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "adp_employment" {
+  dataset_id  = "adp_employment"
+  description = "ADP National Employment Report: monthly NER history (CSV) + weekly preliminary estimates (NER Pulse)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

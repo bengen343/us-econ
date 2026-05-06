@@ -66,3 +66,60 @@ module "claims" {
     google_bigquery_dataset_iam_member.runner_claims_editor,
   ]
 }
+
+module "adp_employment_weekly" {
+  source = "./modules/cloud_run_job"
+
+  name       = "adp-employment-weekly"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.adp_employment.weekly"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # ADP NER Pulse preliminary estimate releases every Tuesday morning. Cron fires
+  # Tuesdays at 06:30 MT.
+  schedule          = "30 6 * * 2"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.adp_employment,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_adp_employment_editor,
+  ]
+}
+
+module "adp_employment_monthly" {
+  source = "./modules/cloud_run_job"
+
+  name       = "adp-employment-monthly"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.adp_employment.monthly"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # ADP NER monthly report drops the first Wednesday of each month. Cron fires
+  # every Wednesday at 06:30 MT; the collector itself bails on Wednesdays past
+  # day 7 of the month. (Same first-of-month gating pattern as bls_employment.)
+  schedule          = "30 6 * * 3"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.adp_employment,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_adp_employment_editor,
+  ]
+}

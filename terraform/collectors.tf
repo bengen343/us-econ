@@ -123,3 +123,33 @@ module "adp_employment_monthly" {
     google_bigquery_dataset_iam_member.runner_adp_employment_editor,
   ]
 }
+
+module "challenger_employment" {
+  source = "./modules/cloud_run_job"
+
+  name       = "challenger-employment"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.challenger_employment"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Challenger Job Cut Announcement Report drops the first Thursday of each
+  # month at 08:30 MT (per the user; the PDF itself is embargoed to 07:30 ET).
+  # Cron fires every Thursday at 08:30 MT; the collector bails on Thursdays
+  # past day 7 of the month.
+  schedule          = "30 8 * * 4"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.challenger_employment,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_challenger_employment_editor,
+  ]
+}

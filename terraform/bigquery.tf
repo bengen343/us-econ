@@ -24,3 +24,11 @@ resource "google_bigquery_dataset" "adp_employment" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "challenger_employment" {
+  dataset_id  = "challenger_employment"
+  description = "Challenger, Gray & Christmas monthly job cut announcement report (parsed from PDF)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

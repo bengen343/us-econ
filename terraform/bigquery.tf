@@ -32,3 +32,11 @@ resource "google_bigquery_dataset" "challenger_employment" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "aaa_gasoline" {
+  dataset_id  = "aaa_gasoline"
+  description = "AAA national average retail gasoline prices, scraped daily from gasprices.aaa.com."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

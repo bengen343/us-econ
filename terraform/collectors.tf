@@ -124,6 +124,34 @@ module "adp_employment_monthly" {
   ]
 }
 
+module "aaa_gasoline" {
+  source = "./modules/cloud_run_job"
+
+  name       = "aaa-gasoline"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.aaa_gasoline"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # AAA refreshes the National Average Gas Prices table daily. Cron fires every
+  # day at 06:00 MT.
+  schedule          = "0 6 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.aaa_gasoline,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_aaa_gasoline_editor,
+  ]
+}
+
 module "challenger_employment" {
   source = "./modules/cloud_run_job"
 

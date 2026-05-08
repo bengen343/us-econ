@@ -152,6 +152,34 @@ module "aaa_gasoline" {
   ]
 }
 
+module "rcp_potus_approval" {
+  source = "./modules/cloud_run_job"
+
+  name       = "rcp-potus-approval"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.rcp_potus_approval"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # RealClearPolling refreshes the approval poll table throughout the day. Cron
+  # fires every day at 09:00 MT for an append-only snapshot.
+  schedule          = "0 9 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.rcp_potus_approval,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_rcp_potus_approval_editor,
+  ]
+}
+
 module "challenger_employment" {
   source = "./modules/cloud_run_job"
 

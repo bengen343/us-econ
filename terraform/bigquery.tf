@@ -40,3 +40,11 @@ resource "google_bigquery_dataset" "aaa_gasoline" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "rcp_potus_approval" {
+  dataset_id  = "rcp_potus_approval"
+  description = "RealClearPolling presidential approval poll table snapshots (append-only daily captures)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

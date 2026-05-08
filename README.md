@@ -130,6 +130,16 @@ The collector picks it up automatically next run.
 3. Add a `module "<name>"` block in [terraform/collectors.tf](terraform/collectors.tf) with the appropriate schedule.
 4. Rebuild the image, `terraform apply`.
 
+## Off-platform collector: rcp_potus_approval
+
+RealClearPolling (`realclearpolling.com`) returns `403 Forbidden` to requests originating from Google Cloud's egress IP ranges, so this one collector cannot run on Cloud Run alongside the others. Its code still lives in this repo at [collectors/rcp_potus_approval/](collectors/rcp_potus_approval/), and the BigQuery dataset (`rcp_potus_approval`) is still provisioned by [terraform/bigquery.tf](terraform/bigquery.tf), but there is intentionally **no** `module "rcp_potus_approval"` in [terraform/collectors.tf](terraform/collectors.tf) and **no** runner-SA IAM binding for the dataset in [terraform/iam.tf](terraform/iam.tf).
+
+Instead, the collector runs from a residential / non-cloud network — currently a MacStadium-hosted virtual Mac — invoked by `cron` once per day at 09:00 MT, mirroring the schedule the Cloud Run Job would have used.
+
+The cron entry runs `uv run python -m collectors.rcp_potus_approval` with `GCP_PROJECT`, `RAW_BUCKET`, and `BQ_LOCATION` set in the environment, plus application-default credentials (either a personal user authorized as a BigQuery dataEditor on `rcp_potus_approval` and Storage objectAdmin on the raw bucket, or `--impersonate-service-account=runner@...`). The runner writes to the same GCS raw bucket and BigQuery dataset as everything else; only the *invocation host* differs.
+
+If RCP ever stops blocking GCP, the path back to Cloud Run is just to restore the `module "rcp_potus_approval"` block and the dataEditor IAM binding and re-apply.
+
 ## Local development
 
 [uv](https://docs.astral.sh/uv/) manages the Python interpreter, the venv, and dependencies. Install it once (`winget install astral-sh.uv` on Windows, or see uv's docs).

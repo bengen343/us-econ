@@ -21,7 +21,7 @@ POTUS = "trump"
 # Realclearpolling rejects our default UA with 403; a stock browser UA passes.
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 )
 BROWSER_HEADERS = {
     "User-Agent": BROWSER_UA,

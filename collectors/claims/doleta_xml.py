@@ -63,7 +63,15 @@ def _fetch_national(http: httpx.Client, *, start_year: int, end_year: int) -> Fe
             seg = week.find(seg_tag)
             if seg is None:
                 continue
-            for sa_tag, sa_key in (("NSA", "nsa"), ("SA", "sa"), ("SA4WK", "sa4wk_ma")):
+            # SF (seasonal factor) is published ahead of the data, so future
+            # weeks carry an SF even though NSA/SA/SA4WK are still blank. Keeping
+            # it here is what retains those forward-dated rows for forecasting.
+            for sa_tag, sa_key in (
+                ("NSA", "nsa"),
+                ("SA", "sa"),
+                ("SA4WK", "sa4wk_ma"),
+                ("SF", "sf"),
+            ):
                 row = _make_row(
                     level="national",
                     area="US",
@@ -196,6 +204,12 @@ def _make_row(
     if value is None:
         return None
     meta = MEASURES_BY_KEY[measure]
+    if sa == "sf":
+        description = f"Multiplicative seasonal factor for {measure.replace('_', ' ')}"
+        units = "factor (base 100)"
+    else:
+        description = meta.description
+        units = meta.units
     return {
         "series_id": f"doleta.{area.lower()}.{measure}.{sa}",
         "source": SOURCE,
@@ -203,8 +217,8 @@ def _make_row(
         "area": area,
         "measure": measure,
         "seasonal_adjustment": sa,
-        "description": meta.description,
-        "units": meta.units,
+        "description": description,
+        "units": units,
         "week_ending": week_ending.isoformat(),
         "vintage_date": vintage_date.isoformat(),
         "value": value,

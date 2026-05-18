@@ -8,7 +8,8 @@
       "PowerShell(bq query *)",
       "PowerShell(bq query --use_legacy_sql=false --format=pretty $sql)",
       "PowerShell(bq query --use_legacy_sql=false --format=pretty $sql2)",
-      "PowerShell($sql = \"SELECT run_id, approach, n, CAST\\(ROUND\\(mae\\) AS INT64\\) AS mae, CAST\\(ROUND\\(rmse\\) AS INT64\\) AS rmse, ROUND\\(mase,3\\) AS mase FROM ``us-econ-51920.claims.fc_scores_overall`` WHERE run_id LIKE 'core_v3%' ORDER BY run_id, mae\")"
+      "PowerShell($sql = \"SELECT run_id, approach, n, CAST\\(ROUND\\(mae\\) AS INT64\\) AS mae, CAST\\(ROUND\\(rmse\\) AS INT64\\) AS rmse, ROUND\\(mase,3\\) AS mase FROM ``us-econ-51920.claims.fc_scores_overall`` WHERE run_id LIKE 'core_v3%' ORDER BY run_id, mae\")",
+      "PowerShell($sql2 = \"SELECT week_ending, series_id, value, vintage_date FROM ``us-econ-51920.claims.weekly_claims`` WHERE series_id IN \\('doleta.us.initial_claims.sa','press.us.initial_claims.sa'\\) AND value IS NOT NULL AND week_ending >= '2026-04-01' ORDER BY week_ending, series_id\")"
     ]
   }
 }

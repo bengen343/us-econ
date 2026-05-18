@@ -1,9 +1,11 @@
 -- Production SA initial-claims forecast.
 --
--- Champion config from backtesting: ARIMA_PLUS on the official SA series with
--- a 2023-01-01 training floor, blended 0.6*ARIMA + 0.4*seasonal-naive
+-- Champion config from backtesting: ARIMA_PLUS on the SA series with a
+-- 2023-01-01 training floor, blended 0.6*ARIMA + 0.4*seasonal-naive
 -- ("ens_w60"). Horizon 1..13 weeks. Backtest (fair, post-COVID): MAE ~8.9k /
--- MASE ~0.77 on a ~220k series.
+-- MASE ~0.77 on a ~220k series. The SA series is fc_sa_input (DOLETA, with
+-- the DOL press advance for the recent weeks DOLETA's XML lags on) so the
+-- origin tracks the latest release rather than DOLETA's stale last week.
 --
 -- Run order: 01_views_pit_actuals.sql (the retained PIT/actuals layer) then
 -- this file. Project/dataset hardcoded to us-econ-51920.claims.
@@ -32,10 +34,10 @@ WHERE generated_at = (
 );
 
 -- ---------------------------------------------------------------------------
--- The forecast procedure. Trains on the freshest data each run (latest vintage
--- per week, use_pit=FALSE), so the coming week always reflects the latest
--- release. Errors are intentionally NOT swallowed -- a scheduled run that
--- fails should surface, not silently skip.
+-- The forecast procedure. Trains on fc_sa_input each run (latest-vintage SA
+-- per week, DOLETA preferred with press-advance fallback), so the origin and
+-- the coming week always reflect the latest release. Errors are intentionally
+-- NOT swallowed -- a scheduled run that fails should surface, not silently skip.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE `us-econ-51920.claims.fc_forecast_sa_initial_claims`()
 BEGIN
@@ -44,22 +46,22 @@ BEGIN
   DECLARE origin DATE;
   DECLARE opts   STRING    DEFAULT "model_type='ARIMA_PLUS', time_series_timestamp_col='week_ending', time_series_data_col='value', data_frequency='WEEKLY', holiday_region='US'";
 
-  -- Latest SA week we actually have data for = the forecast origin.
+  -- Freshest SA week we have (DOLETA, or press advance for the recent weeks
+  -- DOLETA's XML lags on) = the forecast origin.
   EXECUTE IMMEDIATE FORMAT("""
     SELECT MAX(week_ending)
-    FROM `us-econ-51920.claims.fc_pit_series`(
-           'doleta.us.initial_claims.sa', DATE '%t', DATE '%t', FALSE)
-  """, today, today) INTO origin;
+    FROM `us-econ-51920.claims.fc_sa_input`
+    WHERE week_ending <= DATE '%t'
+  """, today) INTO origin;
 
-  -- ARIMA_PLUS on official SA, 2023-01-01 floor through the origin.
+  -- ARIMA_PLUS on the freshest SA series, 2023-01-01 floor through the origin.
   EXECUTE IMMEDIATE FORMAT("""
     CREATE OR REPLACE MODEL `us-econ-51920.claims.fc_prod_sa_arima`
     OPTIONS(%s) AS
     SELECT week_ending, value
-    FROM `us-econ-51920.claims.fc_pit_series`(
-           'doleta.us.initial_claims.sa', DATE '%t', DATE '%t', FALSE)
-    WHERE week_ending >= DATE '2023-01-01'
-  """, opts, origin, origin);
+    FROM `us-econ-51920.claims.fc_sa_input`
+    WHERE week_ending BETWEEN DATE '2023-01-01' AND DATE '%t'
+  """, opts, origin);
 
   -- Blend 0.6*ARIMA + 0.4*seasonal-naive over horizons 1..13 and append.
   EXECUTE IMMEDIATE FORMAT("""
@@ -75,15 +77,15 @@ BEGIN
     ),
     sn AS (
       SELECT week_ending, value
-      FROM `us-econ-51920.claims.fc_pit_series`(
-             'doleta.us.initial_claims.sa', DATE '%t', DATE '%t', FALSE)
+      FROM `us-econ-51920.claims.fc_sa_input`
+      WHERE week_ending <= DATE '%t'
     )
     SELECT TIMESTAMP '%t', DATE '%t', a.horizon, a.target_week,
            0.6 * a.arima_sa + 0.4 * sn.value,
            a.arima_sa, sn.value
     FROM arima a
     JOIN sn ON sn.week_ending = DATE_SUB(a.target_week, INTERVAL 364 DAY)
-  """, origin, origin, origin, origin, origin, gen_ts, origin);
+  """, origin, origin, origin, origin, gen_ts, origin);
 END;
 
 -- ---------------------------------------------------------------------------

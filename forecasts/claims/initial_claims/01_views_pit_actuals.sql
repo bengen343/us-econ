@@ -96,3 +96,36 @@ WITH ranked AS (
 SELECT week_ending, value AS sa_latest
 FROM ranked
 WHERE rn = 1;
+
+-- ---------------------------------------------------------------------------
+-- fc_sa_input: the freshest usable SA value per week for *forecasting*. Per
+-- week, take the latest-vintage DOLETA XML value; if DOLETA has no row yet
+-- (the most recent ~3 weeks -- the XML database lags the DOL press release),
+-- fall back to the latest-vintage press-release advance. This is what keeps
+-- the production origin current instead of stuck at DOLETA's last week.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW `us-econ-51920.claims.fc_sa_input` AS
+WITH ranked AS (
+  SELECT
+    week_ending,
+    series_id,
+    value,
+    ROW_NUMBER() OVER (
+      PARTITION BY series_id, week_ending
+      ORDER BY vintage_date DESC, ingested_at DESC
+    ) AS rn
+  FROM `us-econ-51920.claims.weekly_claims`
+  WHERE series_id IN ('doleta.us.initial_claims.sa', 'press.us.initial_claims.sa')
+    AND value IS NOT NULL
+),
+latest AS (
+  SELECT week_ending, series_id, value FROM ranked WHERE rn = 1
+)
+SELECT
+  week_ending,
+  COALESCE(
+    MAX(IF(series_id = 'doleta.us.initial_claims.sa', value, NULL)),
+    MAX(IF(series_id = 'press.us.initial_claims.sa',  value, NULL))
+  ) AS value
+FROM latest
+GROUP BY week_ending;

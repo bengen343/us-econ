@@ -3,9 +3,15 @@
 -- Champion config from backtesting: ARIMA_PLUS on the SA series with a
 -- 2023-01-01 training floor, blended 0.6*ARIMA + 0.4*seasonal-naive
 -- ("ens_w60"). Horizon 1..13 weeks. Backtest (fair, post-COVID): MAE ~8.9k /
--- MASE ~0.77 on a ~220k series. The SA series is fc_sa_input (DOLETA, with
+-- MASE ~0.77 on a ~220k series. The SA series is fct_sa_input (DOLETA, with
 -- the DOL press advance for the recent weeks DOLETA's XML lags on) so the
 -- origin tracks the latest release rather than DOLETA's stale last week.
+--
+-- Also emits a pure TimesFM 2.5 forecast (timesfm_sa) alongside ens_w60
+-- (sa_forecast) for live side-by-side comparison. Phase-2 backtest: TimesFM
+-- 2.5 beat ens_w60 at h=1 by ~18% (~6.8k vs ~8.3k MAE), but is only validated
+-- at h=1 -- ens_w60 stays the established primary across 1..13 until TimesFM
+-- proves out live across horizons.
 --
 -- Run order: 01_views_pit_actuals.sql (the retained PIT/actuals layer) then
 -- this file. Project/dataset hardcoded to us-econ-51920.claims.
@@ -22,10 +28,14 @@ CREATE TABLE IF NOT EXISTS `us-econ-51920.claims.forecast_sa_initial_claims` (
   horizon      INT64     NOT NULL,            -- weeks ahead (1..13)
   target_week  DATE       NOT NULL,           -- week being forecast
   sa_forecast  FLOAT64,                       -- ens_w60 = .6*arima + .4*snaive
-  arima_sa     FLOAT64,                       -- component (transparency)
-  snaive_sa    FLOAT64                        -- component (transparency)
+  arima_sa     FLOAT64,                       -- ens_w60 component
+  snaive_sa    FLOAT64,                       -- ens_w60 component
+  timesfm_sa   FLOAT64                        -- pure TimesFM 2.5 (parallel)
 ) PARTITION BY data_through;
 
+
+-- _current surfaces both forecasts per target week: sa_forecast (ens_w60,
+-- the established primary) and timesfm_sa (pure TimesFM 2.5) side by side.
 CREATE OR REPLACE VIEW `us-econ-51920.claims.forecast_sa_initial_claims_current` AS
 SELECT *
 FROM `us-econ-51920.claims.forecast_sa_initial_claims`
@@ -34,12 +44,12 @@ WHERE generated_at = (
 );
 
 -- ---------------------------------------------------------------------------
--- The forecast procedure. Trains on fc_sa_input each run (latest-vintage SA
+-- The forecast procedure. Trains on fct_sa_input each run (latest-vintage SA
 -- per week, DOLETA preferred with press-advance fallback), so the origin and
 -- the coming week always reflect the latest release. Errors are intentionally
 -- NOT swallowed -- a scheduled run that fails should surface, not silently skip.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE `us-econ-51920.claims.fc_forecast_sa_initial_claims`()
+CREATE OR REPLACE PROCEDURE `us-econ-51920.claims.fct_forecast_sa_initial_claims`()
 BEGIN
   DECLARE gen_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
   DECLARE today  DATE      DEFAULT CURRENT_DATE();
@@ -50,47 +60,69 @@ BEGIN
   -- DOLETA's XML lags on) = the forecast origin.
   EXECUTE IMMEDIATE FORMAT("""
     SELECT MAX(week_ending)
-    FROM `us-econ-51920.claims.fc_sa_input`
+    FROM `us-econ-51920.claims.fct_sa_input`
     WHERE week_ending <= DATE '%t'
   """, today) INTO origin;
 
   -- ARIMA_PLUS on the freshest SA series, 2023-01-01 floor through the origin.
   EXECUTE IMMEDIATE FORMAT("""
-    CREATE OR REPLACE MODEL `us-econ-51920.claims.fc_prod_sa_arima`
+    CREATE OR REPLACE MODEL `us-econ-51920.claims.fct_prod_sa_arima`
     OPTIONS(%s) AS
     SELECT week_ending, value
-    FROM `us-econ-51920.claims.fc_sa_input`
+    FROM `us-econ-51920.claims.fct_sa_input`
     WHERE week_ending BETWEEN DATE '2023-01-01' AND DATE '%t'
   """, opts, origin);
 
-  -- Blend 0.6*ARIMA + 0.4*seasonal-naive over horizons 1..13 and append.
+  -- Pure TimesFM 2.5 over the same 2023-01-01 floor history (single series;
+  -- AI.FORECAST is zero-shot, no model object). Emitted alongside ens_w60.
+  CREATE TEMP TABLE tf_input AS
+  SELECT TIMESTAMP(week_ending) AS ts, value AS sa
+  FROM `us-econ-51920.claims.fct_sa_input`
+  WHERE week_ending BETWEEN DATE '2023-01-01' AND origin;
+
+  CREATE TEMP TABLE tf_fc AS
+  SELECT DATE(forecast_timestamp) AS target_week,
+         forecast_value AS timesfm_sa
+  FROM AI.FORECAST(TABLE tf_input,
+         data_col => 'sa', timestamp_col => 'ts',
+         model => 'TimesFM 2.5', horizon => 13);
+
+  -- One row per horizon: ens_w60 (primary) and pure TimesFM 2.5 side by side.
+  -- Wrapped in EXECUTE IMMEDIATE on purpose: the ML.FORECAST(MODEL ...) below
+  -- references fct_prod_sa_arima, which the procedure creates dynamically just
+  -- above. A plain reference here would be validated at CREATE PROCEDURE time
+  -- (before the model exists) and the proc would refuse to be created.
   EXECUTE IMMEDIATE FORMAT("""
     INSERT INTO `us-econ-51920.claims.forecast_sa_initial_claims`
+      (generated_at, data_through, horizon, target_week,
+       sa_forecast, arima_sa, snaive_sa, timesfm_sa)
     WITH arima AS (
       SELECT DATE(forecast_timestamp) AS target_week,
              DATE_DIFF(DATE(forecast_timestamp), DATE '%t', WEEK) AS horizon,
              forecast_value AS arima_sa
-      FROM ML.FORECAST(MODEL `us-econ-51920.claims.fc_prod_sa_arima`,
+      FROM ML.FORECAST(MODEL `us-econ-51920.claims.fct_prod_sa_arima`,
                        STRUCT(19 AS horizon, 0.9 AS confidence_level))
       WHERE DATE(forecast_timestamp) > DATE '%t'
         AND DATE_DIFF(DATE(forecast_timestamp), DATE '%t', WEEK) BETWEEN 1 AND 13
     ),
     sn AS (
       SELECT week_ending, value
-      FROM `us-econ-51920.claims.fc_sa_input`
+      FROM `us-econ-51920.claims.fct_sa_input`
       WHERE week_ending <= DATE '%t'
     )
     SELECT TIMESTAMP '%t', DATE '%t', a.horizon, a.target_week,
            0.6 * a.arima_sa + 0.4 * sn.value,
-           a.arima_sa, sn.value
+           a.arima_sa, sn.value,
+           tf.timesfm_sa
     FROM arima a
     JOIN sn ON sn.week_ending = DATE_SUB(a.target_week, INTERVAL 364 DAY)
+    LEFT JOIN tf_fc tf ON tf.target_week = a.target_week
   """, origin, origin, origin, origin, gen_ts, origin);
 END;
 
 -- ---------------------------------------------------------------------------
 -- Run it now:
---   CALL `us-econ-51920.claims.fc_forecast_sa_initial_claims`();
+--   CALL `us-econ-51920.claims.fct_forecast_sa_initial_claims`();
 --   SELECT * FROM `us-econ-51920.claims.forecast_sa_initial_claims_current`
 --   ORDER BY horizon;
 --

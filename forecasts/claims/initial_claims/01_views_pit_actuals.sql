@@ -6,7 +6,7 @@
 -- Run order: 01 (this) -> 02 (procedure) -> 03 (scoring). 99 has examples.
 
 -- ---------------------------------------------------------------------------
--- fc_pit_series: the series as it was knowable at a given forecast origin.
+-- fct_pit_series: the series as it was knowable at a given forecast origin.
 --
 -- For origin O and an upper week bound MW, returns one (week_ending, value)
 -- per week_ending <= MW, choosing the vintage we would have had on O.
@@ -22,7 +22,7 @@
 -- data (MW = origin) and known-ahead inputs like the seasonal factor, whose
 -- week_ending is in the future relative to the origin (MW = origin + horizon).
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE TABLE FUNCTION `us-econ-51920.claims.fc_pit_series`(
+CREATE OR REPLACE TABLE FUNCTION `us-econ-51920.claims.fct_pit_series`(
   p_series   STRING,
   p_origin   DATE,
   p_max_week DATE,
@@ -51,13 +51,13 @@ CREATE OR REPLACE TABLE FUNCTION `us-econ-51920.claims.fc_pit_series`(
 );
 
 -- ---------------------------------------------------------------------------
--- fc_actuals_as_reported: the first-published SA initial-claims value per week
+-- fct_actuals_as_reported: the first-published SA initial-claims value per week
 -- (the "as reported" headline). Earliest vintage across the DOLETA XML and the
 -- DOL press-release PDF, since the press advance number can precede the XML.
 -- Caveat: for weeks predating the collector going live we only ever captured a
 -- single, already-revised vintage, so "as reported" == revised there.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW `us-econ-51920.claims.fc_actuals_as_reported` AS
+CREATE OR REPLACE VIEW `us-econ-51920.claims.fct_actuals_as_reported` AS
 WITH sa AS (
   SELECT week_ending, value, vintage_date, ingested_at
   FROM `us-econ-51920.claims.weekly_claims`
@@ -78,10 +78,10 @@ FROM ranked
 WHERE rn = 1;
 
 -- ---------------------------------------------------------------------------
--- fc_actuals_latest: the fully-revised SA value per week (DOLETA XML only;
+-- fct_actuals_latest: the fully-revised SA value per week (DOLETA XML only;
 -- the press PDF is never revised). Useful as an alternative scoring target.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW `us-econ-51920.claims.fc_actuals_latest` AS
+CREATE OR REPLACE VIEW `us-econ-51920.claims.fct_actuals_latest` AS
 WITH ranked AS (
   SELECT
     week_ending,
@@ -98,13 +98,13 @@ FROM ranked
 WHERE rn = 1;
 
 -- ---------------------------------------------------------------------------
--- fc_sa_input: the freshest usable SA value per week for *forecasting*. Per
+-- fct_sa_input: the freshest usable SA value per week for *forecasting*. Per
 -- week, take the latest-vintage DOLETA XML value; if DOLETA has no row yet
 -- (the most recent ~3 weeks -- the XML database lags the DOL press release),
 -- fall back to the latest-vintage press-release advance. This is what keeps
 -- the production origin current instead of stuck at DOLETA's last week.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW `us-econ-51920.claims.fc_sa_input` AS
+CREATE OR REPLACE VIEW `us-econ-51920.claims.fct_sa_input` AS
 WITH ranked AS (
   SELECT
     week_ending,

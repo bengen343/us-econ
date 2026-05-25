@@ -130,15 +130,21 @@ The collector picks it up automatically next run.
 3. Add a `module "<name>"` block in [terraform/collectors.tf](terraform/collectors.tf) with the appropriate schedule.
 4. Rebuild the image, `terraform apply`.
 
-## Off-platform collector: rcp_potus_approval
+## Off-platform collectors
 
-RealClearPolling (`realclearpolling.com`) returns `403 Forbidden` to requests originating from Google Cloud's egress IP ranges, so this one collector cannot run on Cloud Run alongside the others. Its code still lives in this repo at [collectors/rcp_potus_approval/](collectors/rcp_potus_approval/), and the BigQuery dataset (`rcp_potus_approval`) is still provisioned by [terraform/bigquery.tf](terraform/bigquery.tf), but there is intentionally **no** `module "rcp_potus_approval"` in [terraform/collectors.tf](terraform/collectors.tf) and **no** runner-SA IAM binding for the dataset in [terraform/iam.tf](terraform/iam.tf).
+A handful of sources reject requests from Google Cloud's egress IP ranges, so those collectors cannot run on Cloud Run alongside the others. Their code still lives in this repo, and their BigQuery datasets are still provisioned by [terraform/bigquery.tf](terraform/bigquery.tf), but there is intentionally **no** `module` in [terraform/collectors.tf](terraform/collectors.tf) and **no** runner-SA dataset IAM binding in [terraform/iam.tf](terraform/iam.tf) for these.
 
-Instead, the collector runs from a residential / non-cloud network — currently a MacStadium-hosted virtual Mac — invoked by `cron` once per day at 09:00 MT, mirroring the schedule the Cloud Run Job would have used.
+Instead, each runs from a residential / non-cloud network (e.g. a MacBook, a MacStadium-hosted virtual Mac) invoked by `cron`, mirroring the cadence its Cloud Run Job would have used. The cron entry runs `uv run python -m collectors.<name>` with `GCP_PROJECT`, `RAW_BUCKET`, and `BQ_LOCATION` set in the environment, plus application-default credentials (either a personal user authorized as a BigQuery dataEditor on the dataset and Storage objectAdmin on the raw bucket, or `--impersonate-service-account=runner@...`). The runner writes to the same GCS raw bucket and BigQuery datasets as everything else; only the *invocation host* differs.
 
-The cron entry runs `uv run python -m collectors.rcp_potus_approval` with `GCP_PROJECT`, `RAW_BUCKET`, and `BQ_LOCATION` set in the environment, plus application-default credentials (either a personal user authorized as a BigQuery dataEditor on `rcp_potus_approval` and Storage objectAdmin on the raw bucket, or `--impersonate-service-account=runner@...`). The runner writes to the same GCS raw bucket and BigQuery dataset as everything else; only the *invocation host* differs.
+If any of these sources ever stops blocking GCP, the path back to Cloud Run is just to restore its `module` block and dataEditor IAM binding and re-apply.
 
-If RCP ever stops blocking GCP, the path back to Cloud Run is just to restore the `module "rcp_potus_approval"` block and the dataEditor IAM binding and re-apply.
+### `rcp_potus_approval`
+
+[`realclearpolling.com`](https://www.realclearpolling.com) returns `403 Forbidden` to GCP egress. Code at [collectors/rcp_potus_approval/](collectors/rcp_potus_approval/), dataset `rcp_potus_approval`. Invoked once per day at 09:00 MT.
+
+### `google_trends`
+
+`trends.google.com` consistently returns `400` to GCP egress (Google blocks Trends scraping from its own cloud). Code at [collectors/google_trends/](collectors/google_trends/), dataset `google_trends`. Invoked weekly Thursdays at ~06:00 MT, just before the claims collector lands the new release — so the freshest Trends snapshot is available to the claims forecast Scheduled Query. The collector re-pulls a 5-yr weekly window on every run (Trends' relative renormalization rules that out being incremental); each run is vintage-stamped and append-only, so downstream consumers pick the latest vintage per week.
 
 ## Local development
 

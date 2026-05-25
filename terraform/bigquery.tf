@@ -48,3 +48,11 @@ resource "google_bigquery_dataset" "rcp_potus_approval" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "google_trends" {
+  dataset_id  = "google_trends"
+  description = "Google Trends weekly search-interest indices (full 5-yr re-pull per run, vintage-stamped) -- forecast inputs for claims, gasoline, and other series."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

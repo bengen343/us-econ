@@ -181,3 +181,40 @@ module "challenger_employment" {
     google_bigquery_dataset_iam_member.runner_challenger_employment_editor,
   ]
 }
+
+module "google_trends" {
+  source = "./modules/cloud_run_job"
+
+  name       = "google-trends"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.google_trends"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Google Trends is queried via pytrends and re-pulls a fixed 5-yr weekly
+  # window each run (vintage-stamped, append-only -- downstream picks the
+  # latest vintage per week). Cron fires Thursdays at 06:00 MT, just before
+  # the claims collector at 06:45 MT, so the freshest Trends snapshot is
+  # available to the claims forecast Scheduled Query.
+  #
+  # NOTE: Google blocks GCP egress IPs from trends.google.com aggressively.
+  # If executions 403/connection-refuse, the fallback (per the
+  # rcp_potus_approval precedent) is to remove this module, drop the
+  # dataEditor IAM binding above, and run `uv run python -m collectors.google_trends`
+  # from an off-platform host (residential / non-cloud) via cron.
+  schedule          = "0 6 * * 4"
+  schedule_timezone = "America/Denver"
+  timeout           = "600s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.google_trends,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_google_trends_editor,
+  ]
+}

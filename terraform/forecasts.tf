@@ -38,5 +38,6 @@ module "direction_lgbm_initial_claims" {
     google_bigquery_dataset.adp_employment,
     google_bigquery_dataset_iam_member.runner_claims_editor,
     google_bigquery_dataset_iam_member.runner_adp_employment_editor,
+    google_bigquery_dataset_iam_member.runner_google_trends_viewer,
   ]
 }

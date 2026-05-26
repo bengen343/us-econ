@@ -1,5 +1,5 @@
 # GitHub-driven trigger that builds and pushes the collector image whenever
-# code under collectors/ (or build-relevant files) lands on main.
+# code under collectors/ or forecasts/ (or build-relevant files) lands on main.
 #
 # REQUIRES one-time manual setup before this can apply:
 #   1. Push this repo to GitHub.
@@ -11,7 +11,7 @@
 
 resource "google_cloudbuild_trigger" "build_collector" {
   name        = "build-collector-on-push"
-  description = "Build and push the collector container when collectors/, Dockerfile, pyproject.toml, or uv.lock changes on main."
+  description = "Build and push the collector container when collectors/, forecasts/, Dockerfile, pyproject.toml, or uv.lock changes on main."
   location    = "global"
 
   service_account = google_service_account.runner.id
@@ -26,6 +26,7 @@ resource "google_cloudbuild_trigger" "build_collector" {
 
   included_files = [
     "collectors/**",
+    "forecasts/**",
     "Dockerfile",
     "pyproject.toml",
     "uv.lock",

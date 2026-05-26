@@ -10,7 +10,15 @@
       "PowerShell(bq query --use_legacy_sql=false --format=pretty $sql2)",
       "PowerShell($sql = \"SELECT run_id, approach, n, CAST\\(ROUND\\(mae\\) AS INT64\\) AS mae, CAST\\(ROUND\\(rmse\\) AS INT64\\) AS rmse, ROUND\\(mase,3\\) AS mase FROM ``us-econ-51920.claims.fct_scores_overall`` WHERE run_id LIKE 'core_v3%' ORDER BY run_id, mae\")",
       "PowerShell($sql2 = \"SELECT week_ending, series_id, value, vintage_date FROM ``us-econ-51920.claims.weekly_claims`` WHERE series_id IN \\('doleta.us.initial_claims.sa','press.us.initial_claims.sa'\\) AND value IS NOT NULL AND week_ending >= '2026-04-01' ORDER BY week_ending, series_id\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(.\\\\.venv\\\\Scripts\\\\python.exe *)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import sys; print\\(sys.executable\\); print\\(sys.version\\)\")",
+      "WebFetch(domain:layoffdata.com)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import lightgbm, xgboost, pandas; print\\('lgbm', lightgbm.__version__\\); print\\('xgb', xgboost.__version__\\); print\\('pandas', pandas.__version__\\)\")",
+      "PowerShell(uv sync *)",
+      "PowerShell(New-Item *)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe forecasts\\\\claims\\\\initial_claims\\\\lgbm_test\\\\pull_data.py)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import httpx; r = httpx.get\\('https://docs.google.com/spreadsheets/d/1B1CYZFyJ1ghK1ApuXEeGKo3mLYWzLwONvmWV8Plkav8/export?format=csv', follow_redirects=True, timeout=60\\); print\\('hist no-gid:', r.status_code, len\\(r.content\\)\\); r2 = httpx.get\\('https://docs.google.com/spreadsheets/d/1q47pIyvmtY7GtF3-7mHOrqBe_0uot_G944XELZ_3raU/export?format=csv', follow_redirects=True, timeout=60\\); print\\('curr no-gid:', r2.status_code, len\\(r2.content\\)\\)\")"
     ]
   }
 }

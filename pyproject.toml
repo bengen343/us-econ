@@ -1,7 +1,7 @@
 [project]
 name = "us-econ"
 version = "0.1.0"
-description = "Periodic collectors that land U.S. economic data into BigQuery."
+description = "Periodic collectors and forecasts for U.S. economic data, landing in BigQuery."
 requires-python = ">=3.12"
 dependencies = [
     "google-cloud-bigquery>=3.25",
@@ -10,6 +10,13 @@ dependencies = [
     "httpx>=0.27",
     "pdfplumber>=0.11",
     "pytrends>=4.9",
+    # Forecast runtime deps — used by forecasts.claims.initial_claims.direction_lgbm
+    # which ships in the same container image as collectors.
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "lightgbm>=4.5",
+    "db-dtypes>=1.3",
 ]
 
 [dependency-groups]
@@ -17,13 +24,19 @@ dev = [
     "ruff>=0.6",
     "pytest>=8",
 ]
+# Local-only exploration deps. Not shipped to the container.
+forecast = [
+    "pyarrow>=17",
+    "xgboost>=2.1",
+    "matplotlib>=3.9",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["collectors*"]
+include = ["collectors*", "forecasts*"]
 
 [tool.ruff]
 line-length = 100

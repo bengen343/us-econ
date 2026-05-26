@@ -33,3 +33,9 @@ override.tf.json
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Local forecast experimentation
+forecasts/**/lgbm_test/data/
+forecasts/**/lgbm_test/runs/
+forecasts/**/lgbm_test/*.parquet
+forecasts/**/lgbm_test/*.csv

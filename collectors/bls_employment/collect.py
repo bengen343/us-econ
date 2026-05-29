@@ -17,6 +17,13 @@ BLS_API_KEY_SECRET = "bls-api-key"
 # BLS API v2 caps a single request at 50 series with a registration key
 # (25 without). Batch series IDs to stay under the limit.
 BLS_API_BATCH_SIZE = 50
+# BLS API v2 also caps the *year span* of a single request: 20 years with a
+# registration key, 10 without. Critically, when the requested range exceeds the
+# cap the API does NOT error — it returns REQUEST_SUCCEEDED and silently clamps
+# the range *from startyear forward*, dropping the most recent year(s). Request
+# in windows no wider than the cap so the current year is never dropped.
+BLS_API_MAX_YEARS_WITH_KEY = 20
+BLS_API_MAX_YEARS_WITHOUT_KEY = 10
 
 
 SCHEMA: list[bigquery.SchemaField] = [
@@ -50,32 +57,36 @@ def collect(settings: Settings) -> LoadSpec:
     series_ids = list(series_index.keys())
 
     api_key = get_secret(settings.project_id, BLS_API_KEY_SECRET)
+    max_years = BLS_API_MAX_YEARS_WITH_KEY if api_key else BLS_API_MAX_YEARS_WITHOUT_KEY
+    windows = _year_windows(start_year, end_year, max_years)
 
     rows: list[dict] = []
     with client() as http:
         for batch_start in range(0, len(series_ids), BLS_API_BATCH_SIZE):
             batch = series_ids[batch_start : batch_start + BLS_API_BATCH_SIZE]
-            payload: dict = {
-                "seriesid": batch,
-                "startyear": str(start_year),
-                "endyear": str(end_year),
-            }
-            if api_key:
-                payload["registrationkey"] = api_key
+            for win_start, win_end in windows:
+                payload: dict = {
+                    "seriesid": batch,
+                    "startyear": str(win_start),
+                    "endyear": str(win_end),
+                }
+                if api_key:
+                    payload["registrationkey"] = api_key
 
-            def call(payload: dict = payload) -> dict:
-                response = http.post(BLS_API_URL, json=payload)
-                response.raise_for_status()
-                return response.json()
+                def call(payload: dict = payload) -> dict:
+                    response = http.post(BLS_API_URL, json=payload)
+                    response.raise_for_status()
+                    return response.json()
 
-            body = with_retries(call)
+                body = with_retries(call)
 
-            if body.get("status") != "REQUEST_SUCCEEDED":
-                raise RuntimeError(
-                    f"BLS API failure: status={body.get('status')!r} message={body.get('message')!r}"
-                )
+                if body.get("status") != "REQUEST_SUCCEEDED":
+                    raise RuntimeError(
+                        f"BLS API failure: status={body.get('status')!r} "
+                        f"message={body.get('message')!r}"
+                    )
 
-            rows.extend(_rows_from_body(body, series_index))
+                rows.extend(_rows_from_body(body, series_index))
 
     return LoadSpec(table=TABLE, schema=SCHEMA, rows=rows)
 
@@ -108,6 +119,23 @@ def _rows_from_body(body: dict, series_index: dict[str, BlsSeries]) -> list[dict
 
 def _is_first_friday(d: date) -> bool:
     return d.weekday() == 4 and d.day <= 7
+
+
+def _year_windows(start_year: int, end_year: int, max_span: int) -> list[tuple[int, int]]:
+    """Split [start_year, end_year] into inclusive windows no wider than max_span years.
+
+    The BLS API silently clamps an over-limit range from the start year forward
+    (dropping the newest years), so each request must stay within the cap.
+    """
+    if max_span < 1:
+        raise ValueError(f"max_span must be >= 1, got {max_span}")
+    windows: list[tuple[int, int]] = []
+    win_start = start_year
+    while win_start <= end_year:
+        win_end = min(win_start + max_span - 1, end_year)
+        windows.append((win_start, win_end))
+        win_start = win_end + 1
+    return windows
 
 
 def _period_to_date(year: str, period: str) -> date | None:

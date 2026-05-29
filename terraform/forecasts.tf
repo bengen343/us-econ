@@ -41,3 +41,34 @@ module "direction_lgbm_initial_claims" {
     google_bigquery_dataset_iam_member.runner_google_trends_viewer,
   ]
 }
+
+module "adp_headline_pulse_bridge" {
+  source = "./modules/cloud_run_job"
+
+  name       = "forecast-adp-headline-pulse"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.adp_employment.national_monthly.pulse_bridge"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The NER Pulse preliminary estimate is collected Tuesdays at 06:30 MT
+  # (module "adp_employment_weekly"). Fire at 07:30 MT Tuesdays so the freshest
+  # Pulse vintage has landed; the job re-nowcasts the next unreleased monthly
+  # headline and upserts a revision row. Runs are cheap + idempotent, so weeks
+  # with no new Pulse vintage simply rewrite the same row with a new timestamp.
+  # The job also self-bootstraps its output table + _current view on first run.
+  schedule          = "30 7 * * 2"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.adp_employment,
+    google_bigquery_dataset_iam_member.runner_adp_employment_editor,
+  ]
+}

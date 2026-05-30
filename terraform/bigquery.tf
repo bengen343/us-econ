@@ -56,3 +56,11 @@ resource "google_bigquery_dataset" "google_trends" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "conference_board" {
+  dataset_id  = "conference_board"
+  description = "The Conference Board Consumer Confidence release: monthly index + survey-share series parsed from the press release (append-only, latest-month-per-run)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

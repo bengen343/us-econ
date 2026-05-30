@@ -182,3 +182,33 @@ module "challenger_employment" {
   ]
 }
 
+module "conference_board" {
+  source = "./modules/cloud_run_job"
+
+  name       = "conference-board"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.conference_board"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The Conference Board Consumer Confidence release drops the last Tuesday of
+  # each month at ~10:00 ET (08:00 MT). Cron fires every Tuesday at 08:30 MT; the
+  # collector itself keeps only the last Tuesday. (Unix-cron can't express "last
+  # Tuesday", same in-code gating pattern as bls_employment/challenger.)
+  schedule          = "30 8 * * 2"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.conference_board,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_conference_board_editor,
+  ]
+}
+

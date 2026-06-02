@@ -74,6 +74,26 @@ model** (`chg: mom+iur+claims`, 31% exact / MAE 0.102):
 So the linear change model with IUR/claims remains the winner; the lift over
 persistence is real but modest, and exact-calling stays ~1/3.
 
+### MIDAS + expanded survey features (2026-06-02)
+
+Tested on the same origins (`midas.py`, `multivariate.py`):
+- **U-MIDAS** (weekly IUR+continued claims, native frequency): `chg: mom+iur+
+  claims` MIDAS 30% / MAE 0.102 — a tie with the monthly mean, no gain.
+- **ISM + Conference Board surveys** (contemporaneous M): `+ism` 31% / MAE 0.100
+  / RMSE 0.127 and `+cb` 30% / 0.100 / **0.126** — a *marginal* lift over the
+  prior 0.102 / 0.130 (move-direction 47%→48-50%), but exact% stays ~31%.
+
+So the surveys add a little to the UR (CB labor differential ~mirrors the rate;
+ISM employment is coincident), but exact-calling remains ~1/3 — the ceiling
+holds. The best modest config is `chg: mom+iur+claims+ism` (MAE 0.100).
+
+**Dynamic factor model** (`dfm.py`, statsmodels `DynamicFactorMQ`, labor factor
+over coincident indicators, Kalman nowcast): 2 factors **31% exact / MAE 0.103**
+— ties the prior best on exact% but slightly worse MAE; no gain. Across all
+methods tried (Ridge, TimesFM, trees, ARIMA-X, U-MIDAS, +ISM/CB, DFM) the best
+remains `chg: mom+iur+claims+ism` (~31% / 0.100). Exact-calling ~1/3 is the
+intrinsic ceiling for a 0.1pp rate one month out.
+
 **Live forecast (May-2026, released ~first Friday Jun-2026; last print 4.3%):**
 both `mom+iur+claims` framings give ≈ **4.25% → rounds to 4.2%** (model calls a
 0.1pp decline).

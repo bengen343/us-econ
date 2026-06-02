@@ -203,3 +203,70 @@ def pull_trends(client: bigquery.Client | None = None) -> pd.DataFrame:
     wide = long.pivot(index="week_ending", columns="series_id", values="value")
     wide.columns = [c.replace("trends.us.", "trends_") for c in wide.columns]
     return wide.reset_index().sort_values("week_ending")
+
+
+# --------------------------------------------------------------------------- #
+# ISM Report On Business (Manufacturing + Services diffusion indexes)
+# --------------------------------------------------------------------------- #
+def pull_ism(client: bigquery.Client | None = None) -> pd.DataFrame:
+    """ISM Manufacturing + Services indexes, monthly, wide. Latest vintage per
+    (report, measure, observation_month).
+
+    Columns: month, then ``ism_mfg_*`` / ``ism_svc_*`` for the headline ``pmi``
+    and ``employment`` indexes. Released early in M+1 (Manufacturing 1st business
+    day, Services 3rd) — ahead of the Employment Situation, so month M is the
+    timely contemporaneous nowcast input.
+    """
+    client = client or _client()
+    sql = f"""
+    WITH ranked AS (
+      SELECT report, measure, observation_month, value,
+             ROW_NUMBER() OVER (PARTITION BY report, measure, observation_month
+                                ORDER BY ingested_at DESC) AS rn
+      FROM `{PROJECT}.ism.report_on_business`
+      WHERE measure IN ('pmi', 'employment')
+    )
+    SELECT report, measure, observation_month, value FROM ranked WHERE rn = 1
+    """
+    long = client.query(sql).to_dataframe()
+    long["observation_month"] = pd.to_datetime(long["observation_month"])
+    rpt = long["report"].map({"manufacturing": "mfg", "services": "svc"})
+    long["col"] = "ism_" + rpt + "_" + long["measure"]
+    wide = long.pivot(index="observation_month", columns="col", values="value")
+    wide.index.name = "month"
+    return wide.sort_index().reset_index()
+
+
+# --------------------------------------------------------------------------- #
+# Conference Board Consumer Confidence (survey shares + indexes)
+# --------------------------------------------------------------------------- #
+def pull_conference_board(client: bigquery.Client | None = None) -> pd.DataFrame:
+    """Conference Board labor-relevant series, monthly, wide. Latest vintage per
+    (measure, observation_month).
+
+    Columns: month, then ``cb_*`` for the labor differential, the jobs shares,
+    and the six-months-ahead jobs expectations. Released ~last Tuesday of month
+    M — ahead of the Employment Situation, so month M is contemporaneous.
+    """
+    client = client or _client()
+    wanted = [
+        "labor_differential", "jobs_plentiful", "jobs_hard_to_get",
+        "exp_jobs_more", "exp_jobs_fewer",
+    ]
+    id_list = ", ".join(f"'{m}'" for m in wanted)
+    sql = f"""
+    WITH ranked AS (
+      SELECT measure, observation_month, value,
+             ROW_NUMBER() OVER (PARTITION BY measure, observation_month
+                                ORDER BY ingested_at DESC) AS rn
+      FROM `{PROJECT}.conference_board.consumer_confidence`
+      WHERE measure IN ({id_list})
+    )
+    SELECT measure, observation_month, value FROM ranked WHERE rn = 1
+    """
+    long = client.query(sql).to_dataframe()
+    long["observation_month"] = pd.to_datetime(long["observation_month"])
+    wide = long.pivot(index="observation_month", columns="measure", values="value")
+    wide.columns = [f"cb_{c}" for c in wide.columns]
+    wide.index.name = "month"
+    return wide.sort_index().reset_index()

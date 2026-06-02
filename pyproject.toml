@@ -10,13 +10,14 @@ dependencies = [
     "httpx>=0.27",
     "pdfplumber>=0.11",
     "pytrends>=4.9",
-    # Forecast runtime deps — used by forecasts.claims.initial_claims.direction_lgbm
-    # which ships in the same container image as collectors.
+    # Forecast runtime deps — used by forecasts that ship in the same container
+    # image as collectors (claims direction_lgbm; bls_employment.production).
     "pandas>=2.2",
     "numpy>=1.26",
     "scikit-learn>=1.5",
     "lightgbm>=4.5",
     "db-dtypes>=1.3",
+    "statsmodels>=0.14",  # dynamic factor model in bls_employment.production
 ]
 
 [dependency-groups]

@@ -72,3 +72,40 @@ module "adp_headline_pulse_bridge" {
     google_bigquery_dataset_iam_member.runner_adp_employment_editor,
   ]
 }
+
+module "employment_situation_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-employment-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_employment.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released Employment Situation (NFP MoM change +
+  # unemployment rate) from a small model ensemble. The release is the first
+  # Friday at 08:30 ET (06:30 MT); the BLS collector loads it at 07:30 MT. We
+  # fire every day in the first week at 05:00 MT — before the release — and the
+  # job gates in code to weekdays on/before the first Friday, re-running each day
+  # so the forecast firms up as Conference Board / ISM / ADP / claims inputs land.
+  # The DFM refits each run (~20s). Self-bootstraps its table + _current view.
+  schedule          = "0 5 1-7 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "600s"
+  memory            = "1Gi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls,
+    google_bigquery_dataset.claims,
+    google_bigquery_dataset.adp_employment,
+    google_bigquery_dataset.conference_board,
+    google_bigquery_dataset.ism,
+    google_bigquery_dataset.google_trends,
+    google_bigquery_dataset_iam_member.runner_bls_editor,
+  ]
+}

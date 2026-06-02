@@ -71,9 +71,38 @@ beat RidgeCV.**
 - **ARIMA_PLUS_XREG**: classical dynamics + the same regressors land at ≈ random
   walk; the auto-ARIMA terms add noise rather than signal.
 
+### MIDAS + expanded survey features (2026-06-02)
+
+Two research-flagged ideas, tested on the same origins (`midas.py`,
+`multivariate.py`) — **neither markedly beats `mom+claims` (82.0k)**:
+- **U-MIDAS** (weekly claims at native frequency, K=13 lags): `mom+claims` MIDAS
+  **84.9k** — slightly worse. At n≈168 the collinear weekly lags add noise; the
+  monthly mean already captures the coincident claims signal.
+- **ISM (Mfg+Svc employment/PMI) + Conference Board (labor differential, jobs
+  expectations)**, contemporaneous M: `+cb` 82.9k, `+ism` 83.6k, `+ism+cb` 83.9k
+  — all marginally worse; surveys-only 117k. Claims dominates; the surveys are
+  redundant for the (mostly services) NFP change.
+
 **The lever (same as ADP):** sub-monthly information. A within-month run-rate
 from a weekly payroll signal (ADP Pulse) is the only thing that could plausibly
 tighten this, and it is data-starved (~16 weeks). It grows each weekly release.
+### Dynamic factor model (2026-06-02)
+
+`dfm.py` — statsmodels `DynamicFactorMQ`, a labor factor over 10 coincident
+indicators (claims/IUR/ISM Mfg+Svc employment/ADP/CB differential/temp-help),
+Kalman-smoother nowcast with the target masked, walk-forward (annual re-est).
+**Does NOT beat `mom+claims` (82.0k):** 1 factor 110.8k, 2 factors 100.8k (large
+~-43 bias). NFP's MoM change is largely *idiosyncratic* month to month, so a
+common factor misses what the direct claims↔payrolls regression captures. The
+Fed's DFM works on GDP with ~30 strongly-co-moving series; this noisy monthly
+target with ~10 indicators is the wrong fit.
+
+**Verdict across everything tried** (Ridge, TimesFM, boosted trees, ARIMA-X,
+U-MIDAS, expanded ISM/CB features, DFM): **none beats Ridge `mom+claims` ≈ 82k.**
+That is the achievable ceiling here; the ~48-65k consensus edge comes from
+analyst judgment + sector detail we can't replicate, not a method/feature we've
+found. Recommend shipping `mom+claims` and revisiting only if a genuinely new
+high-signal input appears (e.g. accruing ADP weekly Pulse history).
 
 **Live forecast (May-2026, released ~first Friday Jun-2026):** `mom+claims`
 ≈ **+72k**. (ADP for May not yet published at this origin.)

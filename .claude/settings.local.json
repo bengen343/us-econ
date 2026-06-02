@@ -110,7 +110,11 @@
       "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check --fix collectors\\\\ism 2>&1)",
       "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff format collectors\\\\ism 2>&1)",
       "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check collectors\\\\ism 2>&1)",
-      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check collectors\\\\ism 2>&1 | Out-String)"
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check collectors\\\\ism 2>&1 | Out-String)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check forecasts\\\\bls_employment\\\\midas.py 2>&1)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m forecasts.bls_employment.midas 2>$null)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import statsmodels; from statsmodels.tsa.statespace.dynamic_factor_mq import DynamicFactorMQ; print\\('statsmodels', statsmodels.__version__, 'DynamicFactorMQ OK'\\)\" 2>&1 | Select-Object -Last 3 | Out-String)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check forecasts\\\\bls_employment\\\\dfm.py 2>&1 | Out-String)"
     ]
   }
 }

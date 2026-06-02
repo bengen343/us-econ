@@ -212,3 +212,34 @@ module "conference_board" {
   ]
 }
 
+module "ism" {
+  source = "./modules/cloud_run_job"
+
+  name       = "ism"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.ism"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # ISM releases the Manufacturing Report On Business on the 1st business day of
+  # the month and Services on the 3rd, ~10:00 ET (08:00 MT). Cron fires every day
+  # in the first week at 08:30 MT; the collector gates each report to its release
+  # business day in code (Unix-cron can't express "Nth business day"). Both reports
+  # are sourced from ISM's PR Newswire newsroom (ismworld.org is login-gated).
+  schedule          = "30 8 1-7 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.ism,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_ism_editor,
+  ]
+}
+

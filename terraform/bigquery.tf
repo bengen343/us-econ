@@ -67,7 +67,7 @@ resource "google_bigquery_dataset" "conference_board" {
 
 resource "google_bigquery_dataset" "ism" {
   dataset_id  = "ism"
-  description = "ISM Report On Business (Manufacturing + Services) at-a-glance diffusion indexes, parsed from the PR Newswire press releases (append-only)."
+  description = "Monthly business-survey diffusion indexes: ISM Report On Business (Manufacturing + Services, table report_on_business) and S&P Global US PMI flash + final (table sp_global_us_pmi), parsed from the respective press releases (append-only)."
   location    = var.bq_location
 
   depends_on = [google_project_service.enabled]

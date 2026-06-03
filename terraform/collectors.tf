@@ -243,3 +243,37 @@ module "ism" {
   ]
 }
 
+module "sp_global_pmi" {
+  source = "./modules/cloud_run_job"
+
+  name       = "sp-global-pmi"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.sp_global_pmi"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # S&P Global publishes the US PMI as public PDFs on pmi.spglobal.com: the Flash
+  # US PMI mid-month (~21st-24th, current survey month) and the final US Services
+  # PMI early the next month (~3rd, prior survey month), both embargoed to
+  # 13:45/14:45 UTC. Cron fires at 08:30 MT (after the embargo year-round) across
+  # both day windows; the collector ingests only a release whose listed date is
+  # today, so off-days are cheap no-ops. A missed run self-heals: the next release
+  # restates the prior month's value. (Unix-cron can't express "Nth business day"
+  # / "fourth Thursday", so we widen the day-of-month ranges and gate in code.)
+  schedule          = "30 8 1-7,19-26 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.ism,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_ism_editor,
+  ]
+}
+

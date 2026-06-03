@@ -14,15 +14,17 @@ Business Activity Index* (the headline "Services PMI"):
              ISM Services for the same survey month. Its summary box also gives
              the Composite Output Index and both Manufacturing headline indices,
              which we capture too (cheap, and useful as extra forecast inputs).
+             Only the current (flash) month is taken — the bullet's "(April: ...)"
+             parenthetical is the prior month's *final* (already out by flash day),
+             not a flash reading, so it's deliberately not emitted.
   * final  — the full release, published the 3rd of the following month (per the
              release's own methodology note), confirming the survey month. Only
              the Services Business Activity Index is extracted; the composite is
              intentionally skipped because the PDF's two-column layout interleaves
              the contact box through "...up [column break] from <prior>", making
-             a robust prior-value extraction impossible.
-
-Like ISM, each release also states the immediately-prior month's value, so a
-missed run self-heals: the next release restates the month we missed.
+             a robust prior-value extraction impossible. The final does restate the
+             immediately-prior month's value, so a missed final self-heals next
+             month; a missed flash does not (only its own release carries it).
 """
 
 from __future__ import annotations
@@ -91,6 +93,15 @@ _FINAL_CURRENT_RE = re.compile(
 _FINAL_PRIOR_RE = re.compile(
     rf"(?:following|(?:up|down)\s+from|from)\s+{_DEC}\s+in\s+({_MONTHS_ALT})", re.IGNORECASE
 )
+# Fallback for the month-first framing where the value trails the month, e.g.
+# "...Index fell in February, decreasing to 51.7 from 52.7 ...": month, then
+# "to <current> from <prior>". Only tried when _FINAL_CURRENT_RE misses; the
+# prior is accepted under the same month-before-current guard in _parse_final.
+_FINAL_ALT_RE = re.compile(
+    rf"Index[\w\s,'’\-]{{0,40}}?in\s+({_MONTHS_ALT})[\w\s,'’\-]{{0,40}}?"
+    rf"to\s+{_DEC}\s+from\s+{_DEC}",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -130,26 +141,23 @@ def parse_release(pdf_bytes: bytes, release_type: str) -> ParseResult:
 
 def _parse_flash(text: str, release_date: date) -> tuple[list[dict], date, list[str]]:
     # Flash is published within its survey month, so the survey month is the
-    # release month; the parenthetical "(April: ...)" names the prior month.
+    # release month. We take only the current (flash) value per bullet: the
+    # parenthetical "(April: 51.0)" is NOT a flash reading — it's the prior
+    # month's final (which publishes ~3rd, before this ~21st flash), so emitting
+    # it as release_type="flash" would clobber that month's true flash via the
+    # latest-ingested_at dedup. The prior month's own flash carries its value.
     current = date(release_date.year, release_date.month, 1)
-    prior = _prior_month(current)
 
     rows: list[dict] = []
     warnings: list[str] = []
     for label, report, measure in _FLASH_BULLETS:
-        # Current value: required per bullet. Prior value: optional trailing
-        # "(<Month>: <prior>)" — captured when pdfplumber kept it adjacent.
-        m = re.search(
-            label + _SEP + rf"[^(]*?{_DEC}(?:\s*\([^)]*?{_DEC}\s*\))?",
-            text,
-            re.IGNORECASE,
-        )
+        # First decimal after the label is the current value ([^(]* skips both the
+        # footnote "(n)" — consumed by _SEP — and any interleaved chart-axis ticks).
+        m = re.search(label + _SEP + rf"[^(]*?{_DEC}", text, re.IGNORECASE)
         if m is None:
             warnings.append(f"flash bullet current value not found: {label!r}")
             continue
         rows.append(_row(report, measure, "flash", current, float(m.group(1)), release_date))
-        if m.group(2) is not None:
-            rows.append(_row(report, measure, "flash", prior, float(m.group(2)), release_date))
     return rows, current, warnings
 
 
@@ -160,11 +168,7 @@ def _parse_final(text: str, release_date: date) -> tuple[list[dict], date, list[
     # relevant services reading.
     m = _FINAL_CURRENT_RE.search(text)
     if m is None:
-        return (
-            [],
-            date(release_date.year, release_date.month, 1),
-            ["final release: Services Business Activity Index value not matched; skipped"],
-        )
+        return _parse_final_alt(text, release_date)
     current = _resolve_month(m.group(2), release_date)
     rows = [
         _row("services", "business_activity", "final", current, float(m.group(1)), release_date)
@@ -194,6 +198,24 @@ def _parse_final(text: str, release_date: date) -> tuple[list[dict], date, list[
                 f"current {current.isoformat()}; prior value skipped"
             )
     return rows, current, warnings
+
+
+def _parse_final_alt(text: str, release_date: date) -> tuple[list[dict], date, list[str]]:
+    # Month-first fallback: "...Index fell in February, decreasing to 51.7 from 52.7".
+    a = _FINAL_ALT_RE.search(text)
+    if a is None:
+        return (
+            [],
+            date(release_date.year, release_date.month, 1),
+            ["final release: Services Business Activity Index value not matched; skipped"],
+        )
+    current = _resolve_month(a.group(1), release_date)
+    prior = _prior_month(current)
+    rows = [
+        _row("services", "business_activity", "final", current, float(a.group(2)), release_date),
+        _row("services", "business_activity", "final", prior, float(a.group(3)), release_date),
+    ]
+    return rows, current, []
 
 
 def _row(

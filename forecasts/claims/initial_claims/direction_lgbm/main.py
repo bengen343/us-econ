@@ -72,11 +72,20 @@ def _pull_trends(client: bigquery.Client) -> pd.DataFrame:
 
 
 def _pull_adp(client: bigquery.Client) -> pd.DataFrame:
+    # ner_history accumulates one vintage per ADP release, each re-stating the
+    # full weekly history, so keep only the latest vintage per observation_date.
+    # Without this the panel index has duplicate week_ending labels and reindex
+    # fails ("cannot reindex on an axis with duplicate labels").
     sql = f"""
-    SELECT observation_date AS week_ending, ner
-    FROM `{PROJECT}.adp_employment.ner_history`
-    WHERE timestep = 'W' AND aggregation = 'National' AND category = 'U.S.'
-    ORDER BY observation_date
+    WITH ranked AS (
+      SELECT observation_date, ner,
+             ROW_NUMBER() OVER (PARTITION BY observation_date
+                                ORDER BY vintage_date DESC) AS rn
+      FROM `{PROJECT}.adp_employment.ner_history`
+      WHERE timestep = 'W' AND aggregation = 'National' AND category = 'U.S.'
+    )
+    SELECT observation_date AS week_ending, ner FROM ranked WHERE rn = 1
+    ORDER BY week_ending
     """
     df = client.query(sql).to_dataframe()
     df["week_ending"] = pd.to_datetime(df["week_ending"])

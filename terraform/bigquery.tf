@@ -72,3 +72,19 @@ resource "google_bigquery_dataset" "ism" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "bls_cpi" {
+  dataset_id  = "bls_cpi"
+  description = "BLS Consumer Price Index (CPI-U): headline, core, and component index levels (SA + NSA) with API-supplied 1/3/12-month percent changes, from the BLS API v2 (append-only, vintage-stamped)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_bigquery_dataset" "bls_ppi" {
+  dataset_id  = "bls_ppi"
+  description = "BLS Producer Price Index Final Demand-Intermediate Demand (FD-ID): headline, core, and component index levels (SA + NSA) with API-supplied 1/3/12-month percent changes, from the BLS API v2 (append-only, vintage-stamped)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

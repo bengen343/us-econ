@@ -243,6 +243,69 @@ module "ism" {
   ]
 }
 
+module "bls_cpi" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-cpi"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.bls_cpi"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # CPI for the prior month is released mid-month at 08:30 ET (06:30 MT), on a
+  # date that drifts (~10th-15th, any weekday). Cron fires daily at 07:00 MT
+  # across the 10-18 window; the collector re-pulls full history each run and is
+  # append-only, so off-release runs just add an identical vintage and downstream
+  # takes the latest vintage per period. (Unix-cron can't AND day-of-month with
+  # weekday, so we widen the day range rather than gate in code.)
+  schedule          = "0 7 10-18 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+    google_secret_manager_secret_iam_member.runner_bls_key_accessor,
+  ]
+}
+
+module "bls_ppi" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-ppi"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.bls_ppi"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # PPI Final Demand for the prior month is released mid-month at 08:30 ET (06:30
+  # MT), usually within a day of CPI (~11th-18th). Same widened-window /
+  # append-only / latest-vintage approach as bls_cpi.
+  schedule          = "0 7 10-18 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_ppi,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_bls_ppi_editor,
+    google_secret_manager_secret_iam_member.runner_bls_key_accessor,
+  ]
+}
+
 module "sp_global_pmi" {
   source = "./modules/cloud_run_job"
 

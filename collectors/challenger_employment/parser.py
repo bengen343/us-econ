@@ -27,6 +27,17 @@ _MONTH_ABBR = {
     "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
     "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
 }
+_MONTH_NUM_TO_ABBR = {num: abbr for abbr, num in _MONTH_ABBR.items()}
+
+
+def _monthly_header_prefix(report_month: date) -> str:
+    """Prefix of the monthly column header for ``report_month`` (e.g. 'may-' for May).
+
+    Challenger labels the latest monthly column as '<Mon>-<YY>' (e.g. 'May-26').
+    The abbreviation tracks the report month, so it must be derived rather than
+    hardcoded to any single month's sample.
+    """
+    return _MONTH_NUM_TO_ABBR[report_month.month].lower() + "-"
 
 _REPORT_MONTH_RE = re.compile(
     r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b"
@@ -58,22 +69,30 @@ def parse_report(pdf_bytes: bytes) -> ParseResult:
         cut_reasons_rows: list[dict] = []
         quarterly_rows: list[dict] = []
 
+        # Dispatch on each table's descriptive title, NOT its "Table N:" number.
+        # Challenger inserts/removes tables between releases (e.g. the May 2026
+        # report added "ANNOUNCED NEWS CUTS" as Table 5, shifting QUARTER BY
+        # QUARTER and the two HIRING PLANS tables up by one), so the numbers are
+        # not stable but the titles are. The two "ANNOUNCED HIRING PLANS" tables
+        # are disambiguated by the "By Month" subtitle (totals) vs. the industry
+        # breakdown.
         for page in pdf.pages:
             text = page.extract_text() or ""
-            if "Table 1: EXECUTIVE SUMMARY" in text:
+            if "EXECUTIVE SUMMARY" in text:
                 monthly_rows.extend(_parse_table1_layoffs_total(text, report_month))
-            if "Table 2: JOB CUTS BY INDUSTRY" in text:
+            if "JOB CUTS BY INDUSTRY" in text:
                 monthly_rows.extend(_parse_table2_industry(page, report_month))
-            if "Table 3: JOB CUTS BY REGION, STATE" in text:
+            if "JOB CUTS BY REGION, STATE" in text:
                 monthly_rows.extend(_parse_table3_state(page, report_month))
-            if "Table 4: JOB CUTS BY REASON" in text:
+            if "JOB CUTS BY REASON" in text:
                 cut_reasons_rows.extend(_parse_table4_reasons(page, report_month))
-            if "Table 5: QUARTER BY QUARTER" in text:
+            if "QUARTER BY QUARTER" in text:
                 quarterly_rows.extend(_parse_table5_quarterly(page))
-            if "Table 6: ANNOUNCED HIRING PLANS" in text:
-                monthly_rows.extend(_parse_table6_hiring_total(page, report_month))
-            if "Table 7: ANNOUNCED HIRING PLANS" in text:
-                monthly_rows.extend(_parse_table7_hiring_industry(page, report_month))
+            if "ANNOUNCED HIRING PLANS" in text:
+                if "By Month" in text:
+                    monthly_rows.extend(_parse_table6_hiring_total(page, report_month))
+                else:
+                    monthly_rows.extend(_parse_table7_hiring_industry(page, report_month))
 
     return ParseResult(
         report_month=report_month,
@@ -296,77 +315,102 @@ def _parse_table2_industry(page, report_month: date) -> list[dict]:
 
 # ---------- Table 3: layoffs by state ----------
 
+# A region header word is closer than this (x-units) to its column neighbours than
+# to the other column. EAST/MIDWEST sit at x0~62-71; WEST/SOUTH at x0~357-360, so
+# the within-column spread is small and the between-column gap is ~290.
+_REGION_NAMES = ("EAST", "MIDWEST", "SOUTH", "WEST")
+_COLUMN_GAP = 100.0
+# State names print this far (x-units) left of their region header (e.g. names at
+# x0~330 under a WEST header at x0~360). A column's left boundary is set this far
+# left of its header so state names are captured, while the prior column's number
+# columns (which end well right of its own header) stay excluded.
+_NAME_INDENT = 50.0
+
+
 def _parse_table3_state(page, report_month: date) -> list[dict]:
-    """Two-column layout: EAST/MIDWEST/SOUTH stack on the left side, WEST occupies
-    the right side. The split between sides is the x0 of the 'WEST' header word,
-    located dynamically since column widths vary release-to-release. Each
-    sub-table has columns ``State | Mar-26 | YTD 2026 | YTD 2025``; we keep only
-    the Mar-26 monthly value."""
+    """Quadrant layout: the four regions are arranged in two columns of two
+    sub-tables each (e.g. EAST/MIDWEST stacked on the left, WEST/SOUTH on the
+    right). Which region sits in which quadrant shifts between releases, so the
+    column/row arrangement is derived from the region-header coordinates rather
+    than hardcoded. Each sub-table has columns ``State | <Mon>-YY | YTD <yr> |
+    YTD <yr-1>``; we keep only the monthly value.
+
+    Words are filtered into a column's x-strip *before* being grouped into rows,
+    which separates side-by-side records that share a y-line (e.g. an EAST row
+    and the WEST row printed beside it)."""
     words = page.extract_words()
-    split_x = _find_west_header_x(words)
+    monthly_prefix = _monthly_header_prefix(report_month)
 
-    left_words = [w for w in words if w["x0"] < split_x]
-    right_words = [w for w in words if w["x0"] >= split_x]
-
-    out: list[dict] = []
-    out.extend(_parse_table3_side(left_words, report_month, ("EAST", "MIDWEST", "SOUTH")))
-    out.extend(_parse_table3_side(right_words, report_month, ("WEST",)))
-    return out
-
-
-def _find_west_header_x(words: list[dict]) -> float:
-    """Return the x0 of the 'WEST' region header word."""
-    for w in words:
-        if w["text"] == "WEST":
-            # Pad slightly to the left so the WEST header word itself is included.
-            return w["x0"] - 5.0
-    raise RuntimeError("Table 3: 'WEST' region header not found on page")
-
-
-def _parse_table3_side(
-    words: list[dict], report_month: date, region_order: tuple[str, ...]
-) -> list[dict]:
-    rows = _group_words_into_rows(words)
-
-    # Find each region header. The header line is the row whose first word equals a region name.
-    region_starts: dict[str, int] = {}
-    monthly_x: float | None = None  # x-center of the 'Mar-26' column header
-    for i, row in enumerate(rows):
-        first_text = row[0]["text"] if row else ""
-        if first_text in region_order and first_text not in region_starts:
-            region_starts[first_text] = i
-            # Capture the monthly column position from the first region's header.
-            if monthly_x is None:
-                for w in row:
-                    if w["text"].lower().startswith("mar-"):
-                        monthly_x = (w["x0"] + w["x1"]) / 2
-                        break
-    if monthly_x is None:
-        raise RuntimeError(f"Table 3 monthly column header not located; regions={region_order}")
-
-    # Build (region_name, start_idx, end_idx) ranges in document order.
-    sorted_regions = sorted(region_starts.items(), key=lambda kv: kv[1])
-    ranges: list[tuple[str, int, int]] = []
-    for j, (region, start) in enumerate(sorted_regions):
-        end = sorted_regions[j + 1][1] if j + 1 < len(sorted_regions) else len(rows)
-        ranges.append((region, start + 1, end))
-
-    out: list[dict] = []
-    for region, start, end in ranges:
-        for row in rows[start:end]:
-            label, numbers = _split_label_and_numbers(row)
-            if not label or label.upper().startswith("TOTAL"):
+    # Locate every region header: its left edge, vertical position, and the
+    # x-center of its monthly column (the '<Mon>-YY' token printed to its right).
+    headers: list[dict] = []
+    for row in _group_words_into_rows(words):
+        for j, w in enumerate(row):
+            if w["text"] not in _REGION_NAMES:
                 continue
-            cells = _assign_to_columns(numbers, [monthly_x], tolerance=40.0)
-            cell = cells[0]
-            if cell is None:
-                continue
-            out.append(
-                _monthly_row(
-                    "layoffs", "state", label, region,
-                    report_month.year, report_month.month, cell,
-                )
+            monthly_x = next(
+                (
+                    (w2["x0"] + w2["x1"]) / 2
+                    for w2 in row[j + 1:]
+                    if w2["text"].lower().startswith(monthly_prefix)
+                ),
+                None,
             )
+            if monthly_x is not None:
+                headers.append({
+                    "region": w["text"],
+                    "left_x": w["x0"],
+                    "top": w["top"],
+                    "monthly_x": monthly_x,
+                })
+    if not headers:
+        raise RuntimeError(
+            f"Table 3: no region headers with a {monthly_prefix!r} monthly column found"
+        )
+
+    # Group region headers into columns by their left x-position.
+    headers.sort(key=lambda h: h["left_x"])
+    columns: list[list[dict]] = [[headers[0]]]
+    for h in headers[1:]:
+        if h["left_x"] - columns[-1][-1]["left_x"] <= _COLUMN_GAP:
+            columns[-1].append(h)
+        else:
+            columns.append([h])
+
+    # Column x-boundaries. A boundary sits just left of the right column's state
+    # names (header left edge minus the name indent) so that the left column's
+    # number columns — which extend well right of the left header, into the gap —
+    # are not pulled into the right column. The leftmost column starts at 0.
+    bounds = [0.0]
+    for right_col in columns[1:]:
+        right_edge = min(h["left_x"] for h in right_col)
+        bounds.append(right_edge - _NAME_INDENT)
+    bounds.append(float("inf"))
+
+    out: list[dict] = []
+    for ci, col_headers in enumerate(columns):
+        x_lo, x_hi = bounds[ci], bounds[ci + 1]
+        col_rows = _group_words_into_rows([w for w in words if x_lo <= w["x0"] < x_hi])
+        # Regions stacked vertically within this column, top to bottom.
+        regions = sorted(col_headers, key=lambda h: h["top"])
+        for ri, reg in enumerate(regions):
+            y_lo = reg["top"]
+            y_hi = regions[ri + 1]["top"] if ri + 1 < len(regions) else float("inf")
+            for row in col_rows:
+                if not (y_lo < row[0]["top"] < y_hi):  # strictly below this header, above the next
+                    continue
+                label, numbers = _split_label_and_numbers(row)
+                if not label or label.upper().startswith("TOTAL"):
+                    continue
+                cells = _assign_to_columns(numbers, [reg["monthly_x"]], tolerance=40.0)
+                if cells[0] is None:
+                    continue
+                out.append(
+                    _monthly_row(
+                        "layoffs", "state", label, reg["region"],
+                        report_month.year, report_month.month, cells[0],
+                    )
+                )
     return out
 
 
@@ -376,19 +420,20 @@ def _parse_table4_reasons(page, report_month: date) -> list[dict]:
     """Columns: ``Reason | Mar-26 | YTD 2026``. Keep only Mar-26."""
     words = page.extract_words()
     rows = _group_words_into_rows(words)
+    monthly_prefix = _monthly_header_prefix(report_month)
 
     monthly_x: float | None = None
     header_idx: int | None = None
     for i, row in enumerate(rows):
         for w in row:
-            if w["text"].lower().startswith("mar-"):
+            if w["text"].lower().startswith(monthly_prefix):
                 monthly_x = (w["x0"] + w["x1"]) / 2
                 header_idx = i
                 break
         if header_idx is not None:
             break
     if header_idx is None or monthly_x is None:
-        raise RuntimeError("Table 4 header row (Mar-YY column) not found")
+        raise RuntimeError("Table 4 header row (<Mon>-YY column) not found")
 
     out: list[dict] = []
     for row in rows[header_idx + 1:]:

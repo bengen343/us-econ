@@ -88,3 +88,11 @@ resource "google_bigquery_dataset" "bls_ppi" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "eia_petroleum" {
+  dataset_id  = "eia_petroleum"
+  description = "EIA petroleum prices: weekly U.S. retail gasoline (all grades + regular/midgrade/premium) and No. 2 diesel, plus daily WTI and Brent crude spot prices, from the EIA API v2. Upserted on (series_id, observation_date) -- EIA prices are not meaningfully revised."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

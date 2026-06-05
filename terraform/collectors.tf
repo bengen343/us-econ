@@ -306,6 +306,37 @@ module "bls_ppi" {
   ]
 }
 
+module "eia_petroleum" {
+  source = "./modules/cloud_run_job"
+
+  name       = "eia-petroleum"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.eia_petroleum"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # EIA refreshes weekly retail gasoline on Mondays (~17:00 ET) and daily crude
+  # spot prices on a rolling basis. Cron fires daily at 07:00 MT; the collector
+  # re-pulls full history and UPSERTs on (series_id, observation_date), so a run
+  # on any day cheaply keeps the table current with no vintage bloat.
+  schedule          = "0 7 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.eia_petroleum,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
+    google_secret_manager_secret_iam_member.runner_eia_key_accessor,
+  ]
+}
+
 module "sp_global_pmi" {
   source = "./modules/cloud_run_job"
 

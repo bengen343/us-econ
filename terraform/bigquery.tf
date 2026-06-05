@@ -104,3 +104,11 @@ resource "google_bigquery_dataset" "zillow_rent" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "bls_ntr" {
+  dataset_id  = "bls_ntr"
+  description = "BLS research New Tenant Rent (R-CPI-NTR) and All Tenant Regressed Rent (R-CPI-ATR) quarterly indices -- the cleanest structural lead of CPI rent (built from CPI Housing Survey microdata). Loaded from a repo-bundled xlsx seed (BLS publication paused 2026-04; bls.gov is bot-blocked, no live fetch), upserted on (index_type, observation_date)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

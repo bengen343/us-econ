@@ -18,6 +18,7 @@ dependencies = [
     "lightgbm>=4.5",
     "db-dtypes>=1.3",
     "statsmodels>=0.14",  # dynamic factor model in bls_employment.production
+    "openpyxl>=3.1.5",  # parse the bundled R-CPI-NTR/ATR seed workbook (bls_ntr)
 ]
 
 [dependency-groups]
@@ -38,6 +39,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["collectors*", "forecasts*"]
+
+[tool.setuptools.package-data]
+# Bundle the one-time BLS New/All-Tenant rent seed workbook into the image so the
+# bls_ntr collector can load it (BLS publication is paused and bls.gov is
+# bot-blocked, so there is no live fetch path; see collectors/bls_ntr).
+"collectors.bls_ntr" = ["data/*.xlsx"]
 
 [tool.ruff]
 line-length = 100

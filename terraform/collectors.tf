@@ -369,6 +369,38 @@ module "zillow_rent" {
   ]
 }
 
+module "bls_ntr" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-ntr"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.bls_ntr"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Loads the repo-bundled R-CPI-NTR/ATR seed workbook (no live source: BLS paused
+  # publication in 2026-04 and bls.gov is bot-blocked). Upserts on (index_type,
+  # observation_date), so runs are idempotent. The R-CPI-NTR/ATR cadence is
+  # quarterly (~mid Jan/Apr/Jul/Oct); cron fires the 15th of those months so that
+  # if BLS resumes and the bundled workbook is refreshed + redeployed, the new
+  # quarters load in place. Until then each run reloads the same static history.
+  schedule          = "0 8 15 1,4,7,10 *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_ntr,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_bls_ntr_editor,
+  ]
+}
+
 module "sp_global_pmi" {
   source = "./modules/cloud_run_job"
 

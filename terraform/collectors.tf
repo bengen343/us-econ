@@ -337,6 +337,38 @@ module "eia_petroleum" {
   ]
 }
 
+module "zillow_rent" {
+  source = "./modules/cloud_run_job"
+
+  name       = "zillow-rent"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.zillow_rent"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Zillow publishes ZORI monthly, ~2 weeks after month-end (e.g. the March
+  # series mid-April). Cron fires daily across the 15-23 window at 08:00 MT; the
+  # collector re-pulls the full public CSV and appends a vintage-stamped national
+  # series each run, so the release is caught within days regardless of its exact
+  # date and downstream takes the latest vintage per month. No API key needed
+  # (public CDN CSV).
+  schedule          = "0 8 15-23 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.zillow_rent,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_zillow_rent_editor,
+  ]
+}
+
 module "sp_global_pmi" {
   source = "./modules/cloud_run_job"
 

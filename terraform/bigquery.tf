@@ -96,3 +96,11 @@ resource "google_bigquery_dataset" "eia_petroleum" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "zillow_rent" {
+  dataset_id  = "zillow_rent"
+  description = "Zillow Observed Rent Index (ZORI), national, smoothed (SA + NSA), from Zillow Research public CSVs -- a market-rent leading indicator for nowcasting CPI shelter (append-only, vintage-stamped to preserve ZORI revisions)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

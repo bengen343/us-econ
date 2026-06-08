@@ -109,3 +109,38 @@ module "employment_situation_forecast" {
     google_bigquery_dataset_iam_member.runner_bls_editor,
   ]
 }
+
+module "cpi_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-cpi-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_cpi.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released CPI (headline & core, m/m and y/y) with the
+  # deterministic bottom-up reconstruction. CPI for the prior month releases
+  # ~the 10th-15th at 08:30 ET (06:30 MT). We fire daily on days 1-15 at 05:00 MT
+  # — before the release (and before the bls_cpi collector loads it at 07:00 MT) —
+  # and the job gates in code to the first ~18 days, re-running each day so the
+  # nowcast firms up as the month's EIA fuel prices finalise. Light + idempotent
+  # (no model fitting; upsert by as_of_date). Self-bootstraps its table + _current
+  # view. Reads bls_cpi (cpi_series + relative_importance) and eia_petroleum.
+  schedule          = "0 5 1-15 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_bigquery_dataset.eia_petroleum,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+    google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
+  ]
+}

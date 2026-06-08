@@ -41,10 +41,12 @@ build-backend = "setuptools.build_meta"
 include = ["collectors*", "forecasts*"]
 
 [tool.setuptools.package-data]
-# Bundle the one-time BLS New/All-Tenant rent seed workbook into the image so the
-# bls_ntr collector can load it (BLS publication is paused and bls.gov is
-# bot-blocked, so there is no live fetch path; see collectors/bls_ntr).
+# Bundle seed workbooks into the image. bls.gov is bot-blocked and these are not
+# in the BLS API, so there is no live fetch path -- the published xlsx are
+# vendored and parsed by their collectors (see collectors/bls_ntr,
+# collectors/bls_cpi_weights).
 "collectors.bls_ntr" = ["data/*.xlsx"]
+"collectors.bls_cpi_weights" = ["data/*.xlsx"]
 
 [tool.ruff]
 line-length = 100

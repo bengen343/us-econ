@@ -119,7 +119,10 @@
       "WebFetch(domain:www.spglobal.com)",
       "WebFetch(domain:www.imf.org)",
       "WebFetch(domain:oecdstatistics.blog)",
-      "WebFetch(domain:arxiv.org)"
+      "WebFetch(domain:arxiv.org)",
+      "Bash(./.venv/Scripts/python.exe -)",
+      "Bash(mkdir -p collectors/bls_cpi_weights/data)",
+      "Bash(cp \"cpi-relative-importance.xlsx\" collectors/bls_cpi_weights/data/)"
     ]
   }
 }

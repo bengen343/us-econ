@@ -276,6 +276,38 @@ module "bls_cpi" {
   ]
 }
 
+module "bls_cpi_weights" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-cpi-weights"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.bls_cpi_weights"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Loads the repo-bundled CPI relative-importance workbook into
+  # bls_cpi.relative_importance (BLS publishes RI only as annual xlsx on
+  # bot-blocked bls.gov; not in the API). Upserts on (weight_year, population,
+  # item_code), so runs are idempotent. RI tables publish annually (~February);
+  # cron fires Feb 20 so that when a new weight year is bundled + redeployed it
+  # loads in place. Reuses the bls_cpi dataset + its runner IAM (no new dataset).
+  schedule          = "0 8 20 2 *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+  ]
+}
+
 module "bls_ppi" {
   source = "./modules/cloud_run_job"
 

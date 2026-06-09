@@ -135,7 +135,25 @@ def _run(http, queries: list[Query], api_key: str) -> list[dict]:
             "EIA query fetched",
             extra={"extras": {"route": query.route, "freq": query.frequency, "rows": len(raw)}},
         )
-    return rows
+    return _dedupe(rows)
+
+
+def _dedupe(rows: list[dict]) -> list[dict]:
+    """Collapse duplicate (series_id, observation_date) rows, last occurrence wins.
+
+    The EIA v2 API returns occasional byte-identical duplicate daily records for
+    some spot series (e.g. LA RBOB EER_EPMRR_PF4_Y05LA_DPG on 2016-07-13 and
+    2020-06-22). Two source rows sharing a merge key break the BigQuery MERGE
+    ("UPDATE/MERGE must match at most one source row for each target row"), so we
+    de-duplicate before loading. The duplicates are identical, so this is lossless.
+    """
+    by_key: dict[tuple, dict] = {}
+    for row in rows:
+        by_key[tuple(row[key] for key in MERGE_KEYS)] = row
+    dropped = len(rows) - len(by_key)
+    if dropped:
+        _log.info("dropped duplicate merge-key rows", extra={"extras": {"dropped": dropped}})
+    return list(by_key.values())
 
 
 def _fetch(http, query: Query, api_key: str) -> list[dict]:

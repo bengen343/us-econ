@@ -4,7 +4,8 @@ Runs daily after the AAA scrape and the RBOB/WTI futures + EIA price collectors
 land. Flow:
 
   1. Pull inputs from BigQuery (read-only) and compute the next-day AAA regular
-     forecast with the symmetric RBOB error-correction model.
+     forecasts: the symmetric RBOB ECM (ecm_sym_rbob_v1) and the seasonal-EC +
+     daily-momentum blend (ecm_seas_mom_v1), one row each per run.
   2. Ensure the output table + _current view exist.
   3. Upsert this run's row keyed by as_of_date (idempotent on same-day retry; a
      new row per data date preserves the forecast trajectory for later backtest).
@@ -146,6 +147,7 @@ def main() -> None:
     audit = [
         {
             "target": f.target,
+            "model_version": f.model_version,
             "target_date": f.target_date.isoformat(),
             "value": f.value_rounded,
             "anchor": round(f.anchor_price, 3),

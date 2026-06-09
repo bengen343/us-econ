@@ -40,6 +40,7 @@ class Spec:
     dwti_lags: tuple[int, ...] = ()  # lags of Delta wti (crude), optional
     ec_mode: str = "sym"  # "none" | "sym" | "asym"
     asym_dx0: bool = False  # split contemporaneous Delta x into +/-
+    deseason_ec: bool = False  # subtract per-calendar-month mean from EC
     label: str = ""
 
     @property
@@ -58,6 +59,12 @@ SPECS: list[Spec] = [
         label="Asymmetric ECM (RBOB, rockets&feathers)",
     ),
     Spec("ecm_sym_wti", dwti_lags=(0, 1), ec_mode="sym", label="Symmetric ECM + WTI lags"),
+    Spec(
+        "ecm_sym_seas",
+        ec_mode="sym",
+        deseason_ec=True,
+        label="Symmetric ECM (RBOB, seasonal EC)",
+    ),
 ]
 
 
@@ -66,6 +73,17 @@ def long_run(retail: np.ndarray, rbob: np.ndarray) -> tuple[float, float]:
     X = np.column_stack([np.ones(len(rbob)), rbob])
     beta, *_ = np.linalg.lstsq(X, retail, rcond=None)
     return float(beta[0]), float(beta[1])
+
+
+def seasonal_resid_means(resid: np.ndarray, months: np.ndarray) -> dict[int, float]:
+    """Mean cointegration residual per calendar month.
+
+    The retail-RBOB wedge is seasonal (~20c/gal calendar swing, widest around the
+    Sep RVP winter-grade futures transition), so the raw EC carries a predictable
+    seasonal component that reads as spurious disequilibrium. Subtracting these
+    means re-centers EC on the month's own normal wedge.
+    """
+    return {m: float(resid[months == m].mean()) for m in range(1, 13) if (months == m).any()}
 
 
 def _lag(arr: np.ndarray, pos: np.ndarray, lag: int) -> np.ndarray:
@@ -141,6 +159,10 @@ def fit_full(panel: pd.DataFrame, spec: Spec) -> tuple[float, float, dict[str, f
     n = len(r)
     a, b = long_run(r, x)
     ec = r - (a + b * x)
+    if spec.deseason_ec:
+        months = panel.index.month.to_numpy()
+        seas = seasonal_resid_means(ec, months)
+        ec = ec - np.array([seas[m] for m in months])
     warmup = spec.max_lag + 1
     pos = np.arange(warmup, n - 1)
     X = _design(spec, pos, dr, dx, dwti, ec)
@@ -169,6 +191,7 @@ def next_day_forecast(
     anchor: float,
     rbob: float,
     days_per_week: float = 5.0,
+    as_of_month: int | None = None,
 ) -> NextDay:
     """Live next-day level forecast: fit `spec` on the full weekly `panel`, then
     evaluate the expected weekly move at the live state (latest weekly RBOB
@@ -176,10 +199,19 @@ def next_day_forecast(
     take ~1/`days_per_week` of it as the one-day change off `anchor`.
 
     `anchor` is the latest retail level being forecast forward (the AAA price in
-    production, or any retail level), `rbob` the latest RBOB level.
+    production, or any retail level), `rbob` the latest RBOB level. For a
+    deseasonalized spec the equilibrium includes the calendar month's normal
+    wedge (`as_of_month`, defaulting to the panel's last month), so EC measures
+    only the abnormal part of the gap.
     """
     a, b, coef = fit_full(panel, spec)
     equilibrium = a + b * rbob
+    if spec.deseason_ec:
+        months = panel.index.month.to_numpy()
+        resid = panel["retail"].to_numpy() - (a + b * panel["rbob"].to_numpy())
+        seas = seasonal_resid_means(resid, months)
+        month = as_of_month if as_of_month is not None else int(panel.index[-1].month)
+        equilibrium += seas.get(month, 0.0)
     ec = anchor - equilibrium
 
     dx_week = panel["rbob"].diff()
@@ -280,6 +312,7 @@ def walk_forward(panel: pd.DataFrame, spec: Spec, test_start: pd.Timestamp) -> p
     dx = np.concatenate([[np.nan], np.diff(x)])
     dwti = np.concatenate([[np.nan], np.diff(wti)])
     idx = panel.index
+    months = idx.month.to_numpy()
     n = len(r)
 
     warmup = spec.max_lag + 1
@@ -289,6 +322,15 @@ def walk_forward(panel: pd.DataFrame, spec: Spec, test_start: pd.Timestamp) -> p
     for p in range(start_pos, n - 1):
         a, b = long_run(r[: p + 1], x[: p + 1])
         ec = r - (a + b * x)  # known through position p
+        if spec.deseason_ec:
+            # PIT seasonal centering: each month's mean uses only obs <= p, and
+            # months with too few observations stay NaN (their rows drop out).
+            resid, ec = ec, np.full(n, np.nan)
+            for m in range(1, 13):
+                mask = months == m
+                hist = mask & (np.arange(n) <= p)
+                if hist.sum() >= 3:
+                    ec[mask] = resid[mask] - resid[hist].mean()
         # Training pairs s -> target dr[s+1], for s in [warmup, p-1].
         train_pos = np.arange(warmup, p)
         X = _design(spec, train_pos, dr, dx, dwti, ec)

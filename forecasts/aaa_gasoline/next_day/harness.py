@@ -28,6 +28,7 @@ from __future__ import annotations
 import pandas as pd
 
 from forecasts.aaa_gasoline.next_day import data, model
+from forecasts.aaa_gasoline.next_day.production import config as cfg
 
 TEST_START = pd.Timestamp("2008-01-01")
 TRADING_DAYS_PER_WEEK = 5.0
@@ -156,36 +157,48 @@ def run_live_distribution(panel: pd.DataFrame, aaa: pd.Series, futures: pd.DataF
 
 
 def run_live_backtest(panel: pd.DataFrame, aaa: pd.Series, futures: pd.DataFrame) -> None:
-    """Thin daily backtest on the available AAA history: production ECM vs RW.
+    """Thin daily backtest on the available AAA history: both production models vs RW.
 
     Tiny n (AAA history is ~1 month), so this is indicative only -- it cannot
     support a Diebold-Mariano verdict. Reported for transparency / smoke-testing.
     The weekly lag terms barely move across this ~1-month window, so the EC term
-    (each day's disequilibrium vs RBOB) carries the daily signal.
+    (each day's disequilibrium vs RBOB) carries the daily signal for the pure
+    ECM, and yesterday's realized change carries it for the blend.
     """
     spec = next(s for s in model.SPECS if s.name == PRODUCTION_SPEC)
+    spec_b = next(s for s in model.SPECS if s.name == cfg.SPEC_NAME_BLEND)
     rbob_daily = futures["rbob"].reindex(futures["rbob"].index.union(aaa.index)).ffill()
     aaa_sorted = aaa.sort_index()
     rows = []
-    for i in range(len(aaa_sorted) - 1):
+    for i in range(1, len(aaa_sorted) - 1):
         d_today = aaa_sorted.index[i]
         r_today, r_next = aaa_sorted.iloc[i], aaa_sorted.iloc[i + 1]
         if d_today not in rbob_daily.index:
             continue
-        nd = model.next_day_forecast(
-            panel, spec, r_today, float(rbob_daily.loc[d_today]), TRADING_DAYS_PER_WEEK
+        rbob0 = float(rbob_daily.loc[d_today])
+        nd = model.next_day_forecast(panel, spec, r_today, rbob0, TRADING_DAYS_PER_WEEK)
+        gap_days = (d_today - aaa_sorted.index[i - 1]).days
+        if not 1 <= gap_days <= cfg.MOMENTUM_MAX_GAP_DAYS:
+            continue
+        momentum = float(r_today - aaa_sorted.iloc[i - 1]) / gap_days
+        nd_b = model.next_day_forecast(
+            panel, spec_b, r_today, rbob0, TRADING_DAYS_PER_WEEK, as_of_month=d_today.month
         )
-        rows.append({"actual": r_next, "ecm": nd.next_day, "rw": r_today})
+        blend = (
+            r_today
+            + cfg.ECM_WEIGHT * nd_b.weekly_move / TRADING_DAYS_PER_WEEK
+            + cfg.MOMENTUM_WEIGHT * momentum
+        )
+        rows.append({"actual": r_next, "ecm": nd.next_day, "blend": blend, "rw": r_today})
     if not rows:
         return
     bt = pd.DataFrame(rows)
-    ecm = model.score(bt["actual"], bt["ecm"])
-    rw = model.score(bt["actual"], bt["rw"])
     print("=" * 100)
     print(f"LIVE BACKTEST (daily AAA, n={len(bt)} day-pairs -- INDICATIVE ONLY, too short for DM)")
     print("=" * 100)
-    print(f"  Random walk      MAE={rw['MAE'] * 100:5.2f}c  RMSE={rw['RMSE'] * 100:5.2f}c")
-    print(f"  Production ECM   MAE={ecm['MAE'] * 100:5.2f}c  RMSE={ecm['RMSE'] * 100:5.2f}c")
+    for name, col in (("Random walk", "rw"), ("ECM (v1)", "ecm"), ("Seas+mom blend (v2)", "blend")):
+        s = model.score(bt["actual"], bt[col])
+        print(f"  {name:<20} MAE={s['MAE'] * 100:5.2f}c  RMSE={s['RMSE'] * 100:5.2f}c")
     print()
 
 

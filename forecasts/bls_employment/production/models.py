@@ -20,6 +20,7 @@ Roster (see ../README files for the backtest evidence):
 
 from __future__ import annotations
 
+import logging
 import warnings
 from dataclasses import dataclass
 
@@ -36,6 +37,27 @@ from forecasts.bls_employment.production import config as cfg
 from forecasts.bls_employment.unemployment_rate import panel as ur_panel
 
 _MIN_TRAIN = 36
+
+_log = logging.getLogger(__name__)
+
+
+def _warn_skipped(target: str, model_version: str, panel: pd.DataFrame, cols: list[str]) -> None:
+    """A model silently missing from the output is a roster failure worth flagging:
+    name the live features that are NaN (usually a collector gap)."""
+    live = panel.loc[panel.index.max(), cols]
+    missing = sorted(live.index[live.isna()])
+    _log.warning(
+        "production model skipped",
+        extra={
+            "extras": {
+                "target": target,
+                "model_version": model_version,
+                "live_month": str(panel.index.max().date()),
+                "missing_live_features": missing,
+                "reason": "missing live features" if missing else f"n_train < {_MIN_TRAIN}",
+            }
+        },
+    )
 
 
 @dataclass
@@ -143,6 +165,8 @@ def compute(client) -> list[ForecastRow]:
         if r is not None:
             rows.append(_nfp_row(mv, nfp_live, r[0], r[1]))
             nfp_changes.append(r[0])
+        else:
+            _warn_skipped(cfg.TARGET_NFP, mv, nfp, cols)
     if nfp_changes:
         rows.append(_nfp_row("ensemble", nfp_live, float(np.mean(nfp_changes)), len(nfp_changes)))
 
@@ -166,11 +190,18 @@ def compute(client) -> list[ForecastRow]:
             level = last_ur + r[0]
             rows.append(_ur_row(mv, ur_live, level, r[1]))
             ur_levels.append(level)
+        else:
+            _warn_skipped(cfg.TARGET_UR, mv, ur, cols)
 
     dfm_r = _dfm_ur_live(client)
     if dfm_r is not None:
         rows.append(_ur_row("dfm", dfm_r[2], dfm_r[0], dfm_r[1]))
         ur_levels.append(dfm_r[0])
+    else:
+        _log.warning(
+            "production model skipped",
+            extra={"extras": {"target": cfg.TARGET_UR, "model_version": "dfm"}},
+        )
 
     if ur_levels:
         rows.append(_ur_row("ensemble", ur_live, float(np.mean(ur_levels)), len(ur_levels)))

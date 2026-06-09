@@ -103,6 +103,13 @@ MEASURES: list[Measure] = [
 # Measures that, if ALL missing, mean the page structure broke (hard fail).
 _CORE_KEYS = ("confidence_index", "jobs_plentiful", "jobs_hard_to_get")
 
+# Net = positive share - negative share; used to validate stated nets and to
+# derive a net when a release only describes it qualitatively.
+_NET_IDENTITIES = [
+    ("labor_differential", "jobs_plentiful", "jobs_hard_to_get"),
+    ("business_net", "business_good", "business_bad"),
+]
+
 _MONTHS = {
     "january": 1,
     "february": 2,
@@ -223,6 +230,17 @@ def parse_release(html: str) -> ParseResult:
     if not any(k in current for k in _CORE_KEYS):
         raise RuntimeError("no core measures parsed; Consumer Confidence page structure changed")
 
+    # Some releases describe a net only qualitatively (e.g. Jan-2026's labor
+    # differential "continuing to flag", no figure). The nets are defined as the
+    # difference of two shares the release always states, so derive them when
+    # unstated — same identity _validate() checks when both are present.
+    for net, pos, neg in _NET_IDENTITIES:
+        if net not in current and pos in current and neg in current:
+            derived = round(current[pos] - current[neg], 1)
+            current[net] = derived
+            m = next(m for m in MEASURES if m.key == net)
+            rows.append(_row(m, release_month, release_month, derived))
+
     return ParseResult(release_month, rows, _validate(current))
 
 
@@ -239,11 +257,7 @@ def _row(m: Measure, observation_month: date, release_month: date, value: float)
 def _validate(cur: dict[str, float]) -> list[str]:
     """Self-consistency checks the release affords for free (within rounding)."""
     warnings: list[str] = []
-    checks = [
-        ("labor_differential", "jobs_plentiful", "jobs_hard_to_get"),
-        ("business_net", "business_good", "business_bad"),
-    ]
-    for net, pos, neg in checks:
+    for net, pos, neg in _NET_IDENTITIES:
         if all(k in cur for k in (net, pos, neg)):
             implied = cur[pos] - cur[neg]
             if abs(implied - cur[net]) > 0.15:

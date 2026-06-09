@@ -1,15 +1,27 @@
-"""EIA petroleum prices collector.
+"""EIA petroleum prices + supply collector.
 
-Lands the high-frequency fuel-price inputs the CPI nowcast leans on: weekly U.S.
-retail gasoline (all grades + regular/midgrade/premium) and No. 2 diesel from the
-EIA "gasoline and diesel" (gnd) dataset, plus daily WTI and Brent crude spot
-prices from the spot (spt) dataset. Gasoline's small CPI weight belies its
-outsized month-to-month swing in headline inflation, and daily crude is the
-signal that moves a headline nowcast between monthly CPI releases.
+Lands the high-frequency fuel inputs the CPI nowcast and the AAA gasoline
+next-day forecast lean on, across two tables:
 
-EIA prices are not meaningfully revised, so rather than append vintages this
+eia_petroleum.prices
+  - weekly U.S. retail gasoline (all grades + regular/midgrade/premium) and
+    No. 2 diesel from the "gasoline and diesel" (gnd) dataset;
+  - daily WTI and Brent crude spot prices from the spot (spt) dataset;
+  - daily U.S. gasoline spot prices (NY Harbor + Gulf Coast conventional
+    regular, and LA RBOB regular) from the same spt dataset. These are the
+    wholesale-level daily benchmark retail tracks with a lag. (EIA has no usable
+    daily NY-Harbor RBOB spot series -- it is unpopulated -- and its monthly
+    refiner wholesale/resale gasoline price program was discontinued in 2022-03,
+    so RBOB futures, RB=F, are collected separately in collectors/energy_futures.)
+
+eia_petroleum.supply
+  - weekly U.S. total motor gasoline ending stocks (stoc/wstk, thousand barrels)
+    and refinery percent utilization of operable capacity (pnp/wiup). Supply-side
+    fundamentals (a volume and a percentage), kept out of the prices table.
+
+EIA series are not meaningfully revised, so rather than append vintages this
 collector UPSERTs on (series_id, observation_date) -- a full-history re-pull each
-day leaves the table at a stable one-row-per-series-date size. Every request
+day leaves each table at a stable one-row-per-series-date size. Every request
 needs the free EIA API key (Secret Manager: ``eia-api-key``); the EIA v2 API caps
 a response at 5000 rows, so requests are paginated.
 """
@@ -26,7 +38,8 @@ from collectors.common.secrets import get_secret
 _log = logging.getLogger(__name__)
 
 EIA_API_URL = "https://api.eia.gov/v2"
-TABLE = "eia_petroleum.prices"
+PRICES_TABLE = "eia_petroleum.prices"
+SUPPLY_TABLE = "eia_petroleum.supply"
 EIA_API_KEY_SECRET = "eia-api-key"
 START_DATE = "2000-01-01"
 PAGE_LEN = 5000  # EIA v2 hard cap per JSON response
@@ -55,10 +68,20 @@ class Query:
     facets: dict[str, list[str]] = field(default_factory=dict)
 
 
-# Weekly retail gasoline + diesel (national), and daily crude spot benchmarks.
-# Crude is selected by the clean `series` facet (RWTC = Cushing WTI, RBRTE =
-# Europe Brent); gasoline/diesel by product + retail process + U.S. area.
-QUERIES: list[Query] = [
+# Daily gasoline spot benchmarks (spt dataset, clean `series` facet). EIA only
+# populates daily *conventional* regular spot for NY Harbor + Gulf Coast, plus LA
+# RBOB regular; NY-Harbor RBOB is unpopulated. These are the wholesale-level
+# daily prices retail tracks with a lag.
+GASOLINE_SPOT_SERIES = [
+    "EER_EPMRU_PF4_Y35NY_DPG",  # NY Harbor conventional regular
+    "EER_EPMRU_PF4_RGC_DPG",  # Gulf Coast conventional regular
+    "EER_EPMRR_PF4_Y05LA_DPG",  # Los Angeles reformulated RBOB regular
+]
+
+# -> eia_petroleum.prices: weekly retail gasoline + diesel (national), daily
+# crude spot benchmarks (RWTC = Cushing WTI, RBRTE = Europe Brent), and daily
+# gasoline spot. Gasoline/diesel retail by product + retail process + U.S. area.
+PRICE_QUERIES: list[Query] = [
     Query(
         "/petroleum/pri/gnd/data/",
         "weekly",
@@ -68,26 +91,51 @@ QUERIES: list[Query] = [
             "duoarea": ["NUS"],
         },
     ),
-    Query("/petroleum/pri/spt/data/", "daily", {"series": ["RWTC", "RBRTE"]}),
+    Query(
+        "/petroleum/pri/spt/data/",
+        "daily",
+        {"series": ["RWTC", "RBRTE", *GASOLINE_SPOT_SERIES]},
+    ),
+]
+
+# -> eia_petroleum.supply: weekly U.S. total motor gasoline ending stocks
+# (product EPM0, process SAE = Ending Stocks -> series WGTSTUS1, thousand
+# barrels) and refinery percent utilization of operable capacity (WPULEUS3, %).
+SUPPLY_QUERIES: list[Query] = [
+    Query(
+        "/petroleum/stoc/wstk/data/",
+        "weekly",
+        {"product": ["EPM0"], "process": ["SAE"], "duoarea": ["NUS"]},
+    ),
+    Query("/petroleum/pnp/wiup/data/", "weekly", {"series": ["WPULEUS3"]}),
 ]
 
 
-def collect(settings: Settings) -> LoadSpec:
+def collect(settings: Settings) -> list[LoadSpec]:
     api_key = get_secret(settings.project_id, EIA_API_KEY_SECRET)
     if not api_key:
         raise RuntimeError(f"EIA API key not found in Secret Manager: {EIA_API_KEY_SECRET}")
 
-    rows: list[dict] = []
     with client() as http:
-        for query in QUERIES:
-            raw = _fetch(http, query, api_key)
-            rows.extend(_row(point, query.frequency) for point in raw)
-            _log.info(
-                "EIA query fetched",
-                extra={"extras": {"route": query.route, "freq": query.frequency, "rows": len(raw)}},
-            )
+        price_rows = _run(http, PRICE_QUERIES, api_key)
+        supply_rows = _run(http, SUPPLY_QUERIES, api_key)
 
-    return LoadSpec(table=TABLE, schema=SCHEMA, rows=rows, merge_keys=MERGE_KEYS)
+    return [
+        LoadSpec(table=PRICES_TABLE, schema=SCHEMA, rows=price_rows, merge_keys=MERGE_KEYS),
+        LoadSpec(table=SUPPLY_TABLE, schema=SCHEMA, rows=supply_rows, merge_keys=MERGE_KEYS),
+    ]
+
+
+def _run(http, queries: list[Query], api_key: str) -> list[dict]:
+    rows: list[dict] = []
+    for query in queries:
+        raw = _fetch(http, query, api_key)
+        rows.extend(_row(point, query.frequency) for point in raw)
+        _log.info(
+            "EIA query fetched",
+            extra={"extras": {"route": query.route, "freq": query.frequency, "rows": len(raw)}},
+        )
+    return rows
 
 
 def _fetch(http, query: Query, api_key: str) -> list[dict]:

@@ -433,6 +433,38 @@ module "bls_ntr" {
   ]
 }
 
+module "energy_futures" {
+  source = "./modules/cloud_run_job"
+
+  name       = "energy-futures"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.energy_futures"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # NYMEX RBOB/WTI and ICE Brent futures settle on trading days (~14:30 ET).
+  # Cron fires daily at 07:00 MT (09:00 ET), matching eia_petroleum: the
+  # collector re-pulls full daily history and UPSERTs on (ticker,
+  # observation_date), so each morning run records the prior session's settled
+  # close and overwrites the prior day's provisional in-progress bar. No API key
+  # (Yahoo public chart endpoint).
+  schedule          = "0 7 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.energy_futures,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_energy_futures_editor,
+  ]
+}
+
 module "sp_global_pmi" {
   source = "./modules/cloud_run_job"
 

@@ -91,7 +91,7 @@ resource "google_bigquery_dataset" "bls_ppi" {
 
 resource "google_bigquery_dataset" "eia_petroleum" {
   dataset_id  = "eia_petroleum"
-  description = "EIA petroleum prices: weekly U.S. retail gasoline (all grades + regular/midgrade/premium) and No. 2 diesel, plus daily WTI and Brent crude spot prices, from the EIA API v2. Upserted on (series_id, observation_date) -- EIA prices are not meaningfully revised."
+  description = "EIA petroleum, from the EIA API v2, upserted on (series_id, observation_date) -- EIA series are not meaningfully revised. Table `prices`: weekly U.S. retail gasoline (all grades + regular/midgrade/premium) and No. 2 diesel, daily WTI and Brent crude spot, and daily U.S. gasoline spot (NY Harbor + Gulf Coast conventional regular, LA RBOB regular). Table `supply`: weekly total motor gasoline ending stocks (thousand barrels) and refinery percent utilization of operable capacity."
   location    = var.bq_location
 
   depends_on = [google_project_service.enabled]
@@ -108,6 +108,14 @@ resource "google_bigquery_dataset" "zillow_rent" {
 resource "google_bigquery_dataset" "bls_ntr" {
   dataset_id  = "bls_ntr"
   description = "BLS research New Tenant Rent (R-CPI-NTR) and All Tenant Regressed Rent (R-CPI-ATR) quarterly indices -- the cleanest structural lead of CPI rent (built from CPI Housing Survey microdata). Loaded from a repo-bundled xlsx seed (BLS publication paused 2026-04; bls.gov is bot-blocked, no live fetch), upserted on (index_type, observation_date)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_bigquery_dataset" "energy_futures" {
+  dataset_id  = "energy_futures"
+  description = "Front-month energy futures daily OHLCV from the Yahoo Finance chart API: RBOB gasoline (RB=F), WTI crude (CL=F), and Brent crude (BZ=F). The low-latency daily market signal for the AAA gasoline next-day forecast (RBOB is the benchmark retail tracks with a lag). Upserted on (ticker, observation_date) -- a provisional in-progress close is overwritten by the settled value on the next run."
   location    = var.bq_location
 
   depends_on = [google_project_service.enabled]

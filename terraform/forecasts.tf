@@ -144,3 +144,40 @@ module "cpi_forecast" {
     google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
   ]
 }
+
+module "aaa_gasoline_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "aaa-gasoline-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.aaa_gasoline.next_day.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Next-day (h=1) AAA national-average regular forecast from the symmetric RBOB
+  # error-correction model. Fits cointegration + short-run dynamics on the long
+  # EIA weekly retail history, then applies it to the latest AAA level + RBOB
+  # settle. Inputs land in the morning -- AAA scrape 06:00 MT, eia_petroleum +
+  # energy_futures 07:00 MT -- so we fire daily at 08:00 MT against the freshest
+  # anchor. Light + idempotent (small OLS; upsert by as_of_date). Self-bootstraps
+  # its table + _current view. Reads eia_petroleum + energy_futures, writes
+  # aaa_gasoline.
+  schedule          = "0 8 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.aaa_gasoline,
+    google_bigquery_dataset.eia_petroleum,
+    google_bigquery_dataset.energy_futures,
+    google_bigquery_dataset_iam_member.runner_aaa_gasoline_editor,
+    google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
+    google_bigquery_dataset_iam_member.runner_energy_futures_editor,
+  ]
+}

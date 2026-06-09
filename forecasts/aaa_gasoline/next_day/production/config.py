@@ -20,6 +20,15 @@ PROJECT = "us-econ-51920"
 OUTPUT_TABLE = "aaa_gasoline.forecast_regular"
 OUTPUT_CURRENT_VIEW = "aaa_gasoline.forecast_regular_current"
 
+# Predictive distribution: half-cent probability bands of the next-day price,
+# stored long-format (one row per band) alongside the point forecast.
+OUTPUT_DIST_TABLE = "aaa_gasoline.forecast_regular_dist"
+OUTPUT_DIST_CURRENT_VIEW = "aaa_gasoline.forecast_regular_dist_current"
+DIST_BUCKET_WIDTH = 0.005  # 0.5 cent/gal bands
+DIST_SPAN_SIGMAS = 4.0  # grid half-width (captures ~99.99% of the mass)
+# OOS residual window used to estimate the daily forecast sigma (recent + cheap).
+SIGMA_TEST_START = "2010-01-01"
+
 MODEL_VERSION = "ecm_sym_rbob_v1"  # symmetric RBOB error-correction model
 SPEC_NAME = "ecm_sym"  # the model.SPECS entry to ship
 

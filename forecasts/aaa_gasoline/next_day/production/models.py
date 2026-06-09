@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+import pandas as pd
 from google.cloud import bigquery
 
 from forecasts.aaa_gasoline.next_day import data, model
@@ -30,6 +31,8 @@ class Forecast:
     rbob_price: float
     equilibrium_price: float
     expected_weekly_move: float
+    sigma_daily: float
+    distribution: list[model.DistBucket]
     model_version: str
     units: str
     n_train: int
@@ -56,6 +59,12 @@ def compute(client: bigquery.Client) -> list[Forecast]:
     rbob = float(rbob_daily.iloc[-1])
 
     nd = model.next_day_forecast(panel, spec, anchor, rbob, cfg.TRADING_DAYS_PER_WEEK)
+    _, daily_sigma = model.forecast_error_sigma(
+        panel, spec, pd.Timestamp(cfg.SIGMA_TEST_START), cfg.TRADING_DAYS_PER_WEEK
+    )
+    distribution = model.predictive_distribution(
+        nd.next_day, daily_sigma, cfg.DIST_BUCKET_WIDTH, cfg.DIST_SPAN_SIGMAS
+    )
 
     return [
         Forecast(
@@ -69,6 +78,8 @@ def compute(client: bigquery.Client) -> list[Forecast]:
             rbob_price=rbob,
             equilibrium_price=nd.equilibrium,
             expected_weekly_move=nd.weekly_move,
+            sigma_daily=daily_sigma,
+            distribution=distribution,
             model_version=cfg.MODEL_VERSION,
             units=cfg.UNITS,
             n_train=nd.n_train,

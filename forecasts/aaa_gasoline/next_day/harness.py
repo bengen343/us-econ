@@ -128,6 +128,33 @@ def run_live(panel: pd.DataFrame, aaa: pd.Series, futures: pd.DataFrame) -> None
     print()
 
 
+def run_live_distribution(panel: pd.DataFrame, aaa: pd.Series, futures: pd.DataFrame) -> None:
+    spec = next(s for s in model.SPECS if s.name == PRODUCTION_SPEC)
+    rbob0 = float(futures["rbob"].dropna().iloc[-1])
+    aaa0 = float(aaa.iloc[-1])
+    nd = model.next_day_forecast(panel, spec, aaa0, rbob0, TRADING_DAYS_PER_WEEK)
+    weekly_sigma, daily_sigma = model.forecast_error_sigma(
+        panel, spec, TEST_START, TRADING_DAYS_PER_WEEK
+    )
+    buckets = model.predictive_distribution(nd.next_day, daily_sigma)
+
+    print("=" * 100)
+    print("NEXT-DAY PROBABILITY DISTRIBUTION (Gaussian; 0.5c bands centered on the forecast)")
+    print("=" * 100)
+    print(
+        f"  point {nd.next_day:.3f}  daily sigma {daily_sigma * 100:.2f}c "
+        f"(= weekly OOS {weekly_sigma * 100:.2f}c / sqrt{TRADING_DAYS_PER_WEEK:.0f})"
+    )
+    captured = sum(b.prob for b in buckets)
+    for b in buckets:
+        if b.prob < 0.005:
+            continue  # hide far-tail bands in the printout
+        bar = "#" * int(round(b.prob * 100))
+        print(f"  {b.low:.3f}-{b.high:.3f}  {b.prob * 100:5.1f}%  {bar}")
+    print(f"  (bands cover {captured * 100:.2f}% of probability mass)")
+    print()
+
+
 def run_live_backtest(panel: pd.DataFrame, aaa: pd.Series, futures: pd.DataFrame) -> None:
     """Thin daily backtest on the available AAA history: production ECM vs RW.
 
@@ -175,6 +202,7 @@ def run() -> None:
     panel = build_weekly_panel(eia_retail, futures)
     run_research(panel)
     run_live(panel, aaa, futures)
+    run_live_distribution(panel, aaa, futures)
     run_live_backtest(panel, aaa, futures)
 
 

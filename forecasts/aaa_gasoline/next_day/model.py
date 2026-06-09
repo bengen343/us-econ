@@ -21,10 +21,12 @@ expanding training window at every step, so the walk-forward is leakage-free.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 from scipy.stats import t as t_dist
 
 
@@ -205,6 +207,63 @@ def next_day_forecast(
         next_day=anchor + dhat / days_per_week,
         n_train=len(panel),
     )
+
+
+@dataclass(frozen=True)
+class DistBucket:
+    """One half-cent (or `width`-wide) probability band of the next-day price."""
+
+    low: float
+    high: float
+    mid: float
+    prob: float
+
+
+def forecast_error_sigma(
+    panel: pd.DataFrame,
+    spec: Spec,
+    test_start: pd.Timestamp,
+    days_per_week: float = 5.0,
+) -> tuple[float, float]:
+    """(weekly_sigma, daily_sigma) from the out-of-sample one-step weekly errors.
+
+    The honest forecast-uncertainty estimate is the spread of the walk-forward
+    residuals (not in-sample). The weekly error variance accumulates ~linearly
+    from daily innovations, so the one-day-ahead sigma is the weekly sigma divided
+    by sqrt(days_per_week) -- corroborated by the (tiny-n) AAA daily backtest.
+    """
+    preds = walk_forward(panel, spec, test_start)
+    err = (preds - panel["retail"]).dropna()
+    weekly_sigma = float(err.std(ddof=1))
+    return weekly_sigma, weekly_sigma / math.sqrt(days_per_week)
+
+
+def predictive_distribution(
+    point: float,
+    sigma: float,
+    width: float = 0.005,
+    span_sigmas: float = 4.0,
+) -> list[DistBucket]:
+    """Gaussian predictive distribution centered at `point`, discretized into
+    `width`-wide bands (default 0.5 cent) snapped to a clean `width` grid and
+    spanning +/- `span_sigmas`. Bucket prob = Phi(high) - Phi(low); at 4 sigma the
+    mass outside the grid is ~0.006%, so the bands effectively sum to 1."""
+    if sigma <= 0:
+        return []
+    lo = math.floor((point - span_sigmas * sigma) / width) * width
+    hi = math.ceil((point + span_sigmas * sigma) / width) * width
+    n = int(round((hi - lo) / width))
+    edges = [round(lo + i * width, 6) for i in range(n + 1)]
+    cdf = norm.cdf(edges, loc=point, scale=sigma)
+    return [
+        DistBucket(
+            low=edges[i],
+            high=edges[i + 1],
+            mid=round((edges[i] + edges[i + 1]) / 2, 6),
+            prob=float(cdf[i + 1] - cdf[i]),
+        )
+        for i in range(n)
+    ]
 
 
 def walk_forward(panel: pd.DataFrame, spec: Spec, test_start: pd.Timestamp) -> pd.Series:

@@ -75,7 +75,7 @@ resource "google_bigquery_dataset" "ism" {
 
 resource "google_bigquery_dataset" "bls_cpi" {
   dataset_id  = "bls_cpi"
-  description = "BLS Consumer Price Index (CPI-U): headline, core, and component index levels (SA + NSA) with API-supplied 1/3/12-month percent changes, from the BLS API v2 (append-only, vintage-stamped)."
+  description = "BLS Consumer Price Index (CPI-U): headline, core, and component index levels (SA + NSA, table cpi_series) plus dollar-denominated average prices (eggs, electricity per kWh; NSA-only, table average_prices), with API-supplied 1/3/12-month percent changes, from the BLS API v2 (append-only, vintage-stamped)."
   location    = var.bq_location
 
   depends_on = [google_project_service.enabled]

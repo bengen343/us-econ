@@ -37,6 +37,7 @@ CPI_ITEMS: list[tuple[str, str]] = [
     # Food
     ("SAF1", "Food"),
     ("SAF11", "Food at home"),
+    ("SEFH", "Eggs"),
     ("SEFV", "Food away from home"),
     # Energy
     ("SA0E", "Energy"),
@@ -72,3 +73,30 @@ def _build() -> list[CpiSeries]:
 
 
 CPI_SERIES: list[CpiSeries] = _build()
+
+
+# Average Price (AP) series ID format: AP + U + <area> + <item>, area 0000
+# (U.S. city average). AP series exist only unadjusted (there is no "APS"
+# prefix) and their values are dollar prices ($/dozen, $/kWh, ...), not index
+# levels, so they load into bls_cpi.average_prices rather than cpi_series.
+_PREFIX_AP = "APU0000"
+
+
+@dataclass(frozen=True)
+class ApSeries:
+    series_id: str
+    item_code: str
+    description: str
+
+
+# (item_code, description). Dollar-denominated companions to the CU indices
+# above for the secondary inflation measures we forecast.
+AP_ITEMS: list[tuple[str, str]] = [
+    ("708111", "Eggs, grade A, large, per doz."),
+    ("72610", "Electricity per kWh"),
+]
+
+AP_SERIES: list[ApSeries] = [
+    ApSeries(f"{_PREFIX_AP}{item_code}", item_code, description)
+    for item_code, description in AP_ITEMS
+]

@@ -247,6 +247,39 @@ module "shelter_forecast" {
   ]
 }
 
+module "electricity_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-electricity-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_cpi.electricity.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released BLS average electricity price
+  # (APU000072610, $/kWh level + m/m %) with an own-history seasonal AR OLS
+  # (see forecasts/bls_cpi/electricity -- administered retail rates carry no
+  # exploitable PPI/natural-gas signal at h=1; persistence + the summer
+  # rate-schedule seasonality won the bake-off). Same cadence as the CPI
+  # forecast: daily on days 1-15 at 05:00 MT, gated in code to the first ~18
+  # days, idempotent upsert by as_of_date. Self-bootstraps its table +
+  # _current view. Reads bls_cpi.average_prices only.
+  schedule          = "0 5 1-15 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

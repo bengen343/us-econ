@@ -145,6 +145,41 @@ module "cpi_forecast" {
   ]
 }
 
+module "eggs_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-eggs-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_cpi.eggs.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released BLS average egg price ($/dozen level and
+  # m/m %) with an AR + PPI-chicken-eggs distributed lag + seasonal OLS (see
+  # forecasts/bls_cpi/eggs). The AP print releases with CPI ~the 10th-15th; the
+  # M-1 PPI regressor landed mid-prior-month, so the nowcast is stable across
+  # the window. Same cadence as the CPI forecast: daily on days 1-15 at 05:00
+  # MT, gated in code to the first ~18 days, idempotent upsert by as_of_date.
+  # Self-bootstraps its table + _current view. Reads bls_cpi.average_prices and
+  # bls_ppi.ppi_series.
+  schedule          = "0 5 1-15 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_bigquery_dataset.bls_ppi,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+    google_bigquery_dataset_iam_member.runner_bls_ppi_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

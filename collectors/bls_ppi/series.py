@@ -48,11 +48,24 @@ PPI_ITEMS: list[tuple[str, str]] = [
 ]
 
 
+# Commodity-classification series (WP + <seasonal> + <commodity code>, no "FD"
+# infix). NSA only: the SA variant of chicken eggs (WPS017107) has long gaps in
+# the 2010s, and the egg forecast consumes the NSA series anyway (its target,
+# the BLS average price, is NSA-only). Chicken eggs is the wholesale regressor
+# for the egg-price forecast (forecasts/bls_cpi/eggs) -- retail follows
+# wholesale with a 2-5 week lag.
+COMMODITY_ITEMS: list[tuple[str, str]] = [
+    ("017107", "Chicken eggs"),
+]
+
+
 def _build() -> list[PpiSeries]:
     series: list[PpiSeries] = []
     for suffix, description in PPI_ITEMS:
         series.append(PpiSeries(f"{_PREFIX_NSA}{suffix}", suffix, description, False))
         series.append(PpiSeries(f"{_PREFIX_SA}{suffix}", suffix, description, True))
+    for code, description in COMMODITY_ITEMS:
+        series.append(PpiSeries(f"WPU{code}", code, description, False))
     return series
 
 

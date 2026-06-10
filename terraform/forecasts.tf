@@ -180,6 +180,41 @@ module "eggs_forecast" {
   ]
 }
 
+module "gasoline_cpi_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-gasoline-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_cpi.gasoline.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released CPI gasoline index (CUSR0000SETB01, SA
+  # level + m/m %) from the target month's own complete EIA weekly retail
+  # prices plus the calendar-month SA wedge (see forecasts/bls_cpi/gasoline).
+  # Distinct from aaa-gasoline-forecast (next-day retail price): this one
+  # targets the monthly CPI component. Same cadence as the CPI forecast: daily
+  # on days 1-15 at 05:00 MT, gated in code to the first ~18 days, idempotent
+  # upsert by as_of_date. Self-bootstraps its table + _current view. Reads
+  # bls_cpi.cpi_series and eia_petroleum.prices.
+  schedule          = "0 5 1-15 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_bigquery_dataset.eia_petroleum,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+    google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

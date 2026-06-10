@@ -73,6 +73,14 @@ resource "google_bigquery_dataset" "ism" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "michigan_sentiment" {
+  dataset_id  = "michigan_sentiment"
+  description = "University of Michigan Surveys of Consumers: Index of Consumer Sentiment, Current Economic Conditions, and Index of Consumer Expectations with the preliminary/final release distinction modeled explicitly (table surveys_of_consumers), scraped from the SCA homepage + official final-history CSVs (merge-upserted on measure/release_type/observation_month)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "bls_cpi" {
   dataset_id  = "bls_cpi"
   description = "BLS Consumer Price Index (CPI-U): headline, core, and component index levels (SA + NSA, table cpi_series) plus dollar-denominated average prices (eggs, electricity per kWh; NSA-only, table average_prices), with API-supplied 1/3/12-month percent changes, from the BLS API v2 (append-only, vintage-stamped)."

@@ -212,6 +212,40 @@ module "conference_board" {
   ]
 }
 
+module "michigan_sentiment" {
+  source = "./modules/cloud_run_job"
+
+  name       = "michigan-sentiment"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.michigan_sentiment"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The Surveys of Consumers release Fridays at 10:00 ET (preliminary ~2nd
+  # Friday of the survey month, final ~4th; exact Fridays shift around
+  # holidays). Cron fires every Friday at 08:30 MT (10:30 ET); the collector
+  # captures whatever release the homepage shows and merge-upserts on
+  # (measure, release_type, observation_month), so non-release Fridays are
+  # idempotent rewrites. The official final-history CSVs are re-ingested
+  # every run, so a missed FINAL self-heals; a missed PRELIMINARY does not
+  # (the homepage is its only public source) -- recover via Wayback snapshot.
+  schedule          = "30 8 * * 5"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.michigan_sentiment,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_michigan_sentiment_editor,
+  ]
+}
+
 module "ism" {
   source = "./modules/cloud_run_job"
 

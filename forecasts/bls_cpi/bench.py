@@ -149,7 +149,7 @@ def run() -> None:
     warnings.simplefilter("ignore")
     print("Pulling BigQuery inputs (read-only)...")
     c = data._client()
-    panel = panel_mod.build_panel(data.pull_cpi(c), data.pull_eia_monthly(c))
+    panel = panel_mod.build_panel(data.pull_cpi(c), data.pull_eia_monthly(c), data.pull_manheim(c))
     weights, weight_year = data.pull_cpi_weights(c)
     x = build_features(panel)
     tm = _test_months(x)

@@ -20,7 +20,16 @@ PROJECT = "us-econ-51920"
 OUTPUT_TABLE = "bls_cpi.forecast_cpi"
 OUTPUT_CURRENT_VIEW = "bls_cpi.forecast_cpi_current"
 
-MODEL_VERSION = "dms_v1"  # deterministic bottom-up reconstruction (Cleveland-Fed DMS)
+# dms_v1: deterministic bottom-up reconstruction (Cleveland-Fed DMS).
+# dms_v2 (2026-06): the CORE targets get a Manheim-driven used-cars adjustment —
+#   used cars are nowcast from the wholesale Manheim index (walk-forward OLS on
+#   1-2 month lags) and core's trailing average is shifted by HALF the weighted
+#   used-cars surprise (half because the surprise only partially transfers to
+#   the core aggregate; backtest lambda* ~ +0.45). The headline targets keep the
+#   plain trailing core (lambda* ~ 0 at headline — used-cars surprises wash out
+#   against food/energy interactions). Falls back to the dms_v1 form when
+#   Manheim is unavailable.
+MODEL_VERSION = "dms_v2"
 
 # The four published targets and their units.
 TARGET_UNITS: dict[str, str] = {

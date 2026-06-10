@@ -18,6 +18,7 @@ returned latest-vintage-per-period:
 from __future__ import annotations
 
 import pandas as pd
+from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
 PROJECT = "us-econ-51920"
@@ -31,6 +32,7 @@ ITEM_SHORT: dict[str, str] = {
     "SA0E": "energy",  # Energy
     "SETB01": "gas",  # Gasoline (all types)
     "SEHF": "enserv",  # Energy services (electricity + utility gas) -- non-gasoline energy proxy
+    "SETA02": "uc",  # Used cars and trucks -- nowcast from the wholesale Manheim index
 }
 
 
@@ -94,6 +96,38 @@ def pull_eia_monthly(client: bigquery.Client | None = None) -> pd.DataFrame:
         columns={"EMM_EPM0_PTE_NUS_DPG": "gas_price", "RWTC": "wti"}
     )
     return wide.sort_index().reset_index()
+
+
+def pull_manheim(client: bigquery.Client | None = None) -> pd.DataFrame:
+    """Manheim Used Vehicle Value Index (SA, 1997-01 = 100), monthly, latest
+    vintage per month. Columns: month, manheim_sa.
+
+    Wholesale used-vehicle prices lead CPI used cars & trucks by ~1-2 months, and
+    month M's full value is published on the 5th business day of M+1 -- before
+    M's CPI release, so it is a fully-observed regressor at the nowcast origin.
+
+    Returns an empty frame if the dataset hasn't been provisioned/seeded yet, so
+    the reconstruction degrades to its no-used-cars form instead of crashing.
+    """
+    client = client or _client()
+    sql = f"""
+    WITH ranked AS (
+      SELECT observation_month, value,
+             ROW_NUMBER() OVER (PARTITION BY observation_month
+                                ORDER BY ingested_at DESC) AS rn
+      FROM `{PROJECT}.manheim_used_vehicles.value_index`
+      WHERE measure = 'index_sa'
+    )
+    SELECT observation_month AS month, value AS manheim_sa
+    FROM ranked WHERE rn = 1
+    ORDER BY month
+    """
+    try:
+        df = client.query(sql).to_dataframe()
+    except NotFound:
+        return pd.DataFrame(columns=["month", "manheim_sa"])
+    df["month"] = pd.to_datetime(df["month"])
+    return df
 
 
 def pull_cpi_weights(client: bigquery.Client | None = None) -> tuple[dict[str, float], int]:

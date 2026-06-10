@@ -26,10 +26,13 @@ from forecasts.adp_employment.national_monthly.pulse_bridge import data, model
 
 
 def _complete_month_pairs(monthly: pd.DataFrame, pulse: pd.DataFrame):
-    """(month, implied, headline) for months with >= min completeness."""
+    """(month, implied, headline) for post-floor months with >= min completeness."""
     hl = model.headline_series(monthly)
+    floor = pd.Timestamp(cfg.CALIB_FLOOR_MONTH)
     out = []
     for month, y in hl.items():
+        if month < floor:
+            continue
         run_rate, obs = model.month_pulse(pulse, month)
         exp = model.expected_weeks(month)
         if obs and exp and obs / exp >= cfg.CALIB_MIN_COMPLETENESS:
@@ -37,13 +40,15 @@ def _complete_month_pairs(monthly: pd.DataFrame, pulse: pd.DataFrame):
     return out
 
 
-def _shrunk_pooled(pairs) -> float:
+def _shrunk_pooled(pairs, completeness: float = 1.0) -> float:
+    """Mirrors model.calibrate_scale's maturity-decayed shrinkage. The LOO
+    report scores full months (completeness 1.0 -> the raw pooled ratio)."""
     xs = np.array([p[1] for p in pairs], float)
     ys = np.array([p[2] for p in pairs], float)
     if len(xs) == 0 or xs.sum() == 0:
         return cfg.CALIB_B0_PRIOR
     xbar = xs.mean()
-    k = cfg.CALIB_PSEUDO_COUNT
+    k = cfg.CALIB_PSEUDO_COUNT * max(0.0, 1.0 - completeness)
     b = (ys.sum() + k * cfg.CALIB_B0_PRIOR * xbar) / (xs.sum() + k * xbar)
     return float(np.clip(b, *cfg.CALIB_SCALE_BOUNDS))
 

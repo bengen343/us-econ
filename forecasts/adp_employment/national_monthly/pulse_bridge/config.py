@@ -15,7 +15,16 @@ the forecast revises every weekly (Tuesday) Pulse release.
 from __future__ import annotations
 
 PROJECT = "us-econ-51920"
-MODEL_VERSION = "pulse_bridge_v1"
+# v1: single shrunk scale (fixed pseudo-count toward B0=1.0).
+# v2 (2026-06): maturity-dependent calibration — the shrinkage toward B0 decays
+#   with the target month's Pulse completeness (theory-prior early, empirical
+#   post-break pooled ratio late), plus a benchmark-break calibration floor.
+#   Motivation: Pulse vintages never revise (no revision curve exists to learn),
+#   and the live headline/implied ratio sat ~0.72-0.75 while the B0=1.0 prior
+#   dragged the scale to ~0.9 — the late-month forecasts systematically
+#   overshot (Apr/May 2026). LOO across maturities: all-maturity MAE 16.5k vs
+#   18.1k (fixed k) vs 16.9k (no prior at all).
+MODEL_VERSION = "pulse_bridge_v2"
 
 # ---- Output ---------------------------------------------------------------- #
 # Append-only: every weekly run inserts a new revision row; the _current view
@@ -34,14 +43,25 @@ PULSE_LAG_DAYS = 17
 # headline(M) ~= b * implied(M),  implied = run_rate * expected_weeks,
 # run_rate = mean of available Pulse weeks in M.
 #
-# b is estimated as the (shrunk) mean per-month ratio headline/implied over
-# calibration months with near-complete Pulse coverage. With only ~4 overlap
-# months today the raw ratio (~0.83) is noisy, so we shrink toward the
-# theoretically-grounded B0=1.0 (monthly change == sum of weekly SA changes if
-# both products were SA-consistent) with K pseudo-observations. As real overlap
-# accrues, b migrates from ~0.9 toward the empirical value.
+# b is estimated as the pooled ratio headline/implied over calibration months
+# with near-complete Pulse coverage, shrunk toward the theoretically-grounded
+# B0=1.0 (monthly change == sum of weekly SA changes if both products were
+# SA-consistent). The shrinkage is MATURITY-DEPENDENT: the effective
+# pseudo-count is CALIB_PSEUDO_COUNT * (1 - completeness of the target month's
+# Pulse coverage). Early in the month — when the run-rate rests on 1-2 noisy
+# weeks and the RW prior dominates the blend anyway — b stays anchored near
+# B0; by month-end b converges to the raw post-break pooled ratio (~0.73 on
+# 2026 overlap months), which the live Apr/May errors showed is what the
+# late-month forecast should trust.
 CALIB_B0_PRIOR = 1.0
 CALIB_PSEUDO_COUNT = 3.0
+
+# Calibration months before this floor are excluded: ADP benchmark/seasonal
+# restatements (annual QCEW benchmark, flowed into the weekly series with the
+# January 2026 NER) shift the headline/Pulse relationship discretely, so
+# pre-break ratio pairs would pollute the post-break scale. Bump this at each
+# future benchmark restatement.
+CALIB_FLOOR_MONTH = "2026-01-01"
 # A calibration month must have at least this fraction of its weeks observed to
 # contribute a clean run_rate->headline ratio.
 CALIB_MIN_COMPLETENESS = 0.75

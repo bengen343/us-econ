@@ -8,7 +8,10 @@ auditable revision row.
 headline(M)        = ner_sa(M) - ner_sa(M-1)                 (the published figure)
 run_rate(M)        = mean Pulse 4wk-MA over weeks ending in M
 implied(M)         = run_rate(M) * expected_weeks(M)
-scale b            = shrunk pooled ratio  headline/implied  over complete months
+scale b            = pooled ratio headline/implied over complete post-break
+                     months, shrunk toward B0 with a pseudo-count that decays
+                     with the target month's completeness (maturity-dependent:
+                     prior-anchored early, empirical late)
 pulse_point(M)     = b * implied(M)
 prior(M)           = last released headline, shrunk toward its trailing mean (RW)
 completeness w     = (observed weeks / expected weeks) ** gamma
@@ -48,19 +51,25 @@ def month_pulse(pulse: pd.DataFrame, month: pd.Timestamp) -> tuple[float, int]:
     return float(wk["pulse"].mean()), int(len(wk))
 
 
-def calibrate_scale(monthly: pd.DataFrame, pulse: pd.DataFrame
-                    ) -> tuple[float, int, float]:
-    """Shrunk pooled bridge scale b. Returns (b, n_calibration_months, raw_b).
+def calibrate_scale(monthly: pd.DataFrame, pulse: pd.DataFrame,
+                    completeness: float = 1.0) -> tuple[float, int, float]:
+    """Maturity-aware shrunk pooled bridge scale b. Returns (b, n_months, raw_b).
 
-    Uses only months with an observed headline and >= CALIB_MIN_COMPLETENESS of
-    their weeks present (so run_rate is a clean full-month estimate). Pooled
-    ratio Sum(y)/Sum(implied) is magnitude-weighted (robust to small-implied
-    months); shrunk toward CALIB_B0_PRIOR with CALIB_PSEUDO_COUNT synthetic
-    months, then clamped to CALIB_SCALE_BOUNDS.
+    Uses only months at/after CALIB_FLOOR_MONTH (benchmark-break floor) with an
+    observed headline and >= CALIB_MIN_COMPLETENESS of their weeks present (so
+    run_rate is a clean full-month estimate). Pooled ratio Sum(y)/Sum(implied)
+    is magnitude-weighted (robust to small-implied months); shrunk toward
+    CALIB_B0_PRIOR with an effective pseudo-count that DECAYS with the target
+    month's completeness — CALIB_PSEUDO_COUNT * (1 - completeness) — so the
+    early-month scale stays anchored near the prior while the late-month scale
+    converges to the raw post-break pooled ratio. Clamped to CALIB_SCALE_BOUNDS.
     """
     hl = headline_series(monthly)
+    floor = pd.Timestamp(cfg.CALIB_FLOOR_MONTH)
     xs, ys = [], []
     for month, y in hl.items():
+        if month < floor:
+            continue
         run_rate, obs = month_pulse(pulse, month)
         exp = expected_weeks(month)
         if obs == 0 or exp == 0:
@@ -77,7 +86,7 @@ def calibrate_scale(monthly: pd.DataFrame, pulse: pd.DataFrame
     sx, sy = float(np.sum(xs)), float(np.sum(ys))
     raw_b = sy / sx if sx != 0 else cfg.CALIB_B0_PRIOR
     xbar = sx / n
-    k = cfg.CALIB_PSEUDO_COUNT
+    k = cfg.CALIB_PSEUDO_COUNT * max(0.0, 1.0 - completeness)
     b = (sy + k * cfg.CALIB_B0_PRIOR * xbar) / (sx + k * xbar)
     lo, hi = cfg.CALIB_SCALE_BOUNDS
     return float(np.clip(b, lo, hi)), n, float(raw_b)
@@ -120,7 +129,7 @@ def forecast(monthly: pd.DataFrame, pulse: pd.DataFrame) -> Forecast:
     comp = min(obs / exp, 1.0) if exp > 0 else 0.0
     w = comp ** cfg.BLEND_GAMMA
 
-    b, n_cal, raw_b = calibrate_scale(monthly, pulse)
+    b, n_cal, raw_b = calibrate_scale(monthly, pulse, completeness=comp)
     prior = rw_prior(monthly)
 
     if obs == 0:

@@ -64,6 +64,12 @@ resource "google_bigquery_dataset_iam_member" "runner_ism_editor" {
   member     = "serviceAccount:${google_service_account.runner.email}"
 }
 
+resource "google_bigquery_dataset_iam_member" "runner_market_indexes_editor" {
+  dataset_id = google_bigquery_dataset.market_indexes.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.runner.email}"
+}
+
 resource "google_bigquery_dataset_iam_member" "runner_michigan_sentiment_editor" {
   dataset_id = google_bigquery_dataset.michigan_sentiment.dataset_id
   role       = "roles/bigquery.dataEditor"

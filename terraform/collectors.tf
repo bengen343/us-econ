@@ -499,6 +499,37 @@ module "energy_futures" {
   ]
 }
 
+module "market_indexes" {
+  source = "./modules/cloud_run_job"
+
+  name       = "market-indexes"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.market_indexes"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # S&P 500 daily close for the Michigan-sentiment forecasts. Cron fires daily
+  # at 07:00 MT (09:00 ET) matching energy_futures: the collector re-pulls the
+  # full daily history (1990+) and UPSERTs on (ticker, observation_date), so
+  # each morning run records the prior session's settled close and overwrites
+  # any provisional in-progress bar. No API key (Yahoo public chart endpoint).
+  schedule          = "0 7 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.market_indexes,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_market_indexes_editor,
+  ]
+}
+
 module "sp_global_pmi" {
   source = "./modules/cloud_run_job"
 

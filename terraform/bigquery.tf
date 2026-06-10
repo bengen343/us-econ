@@ -73,6 +73,14 @@ resource "google_bigquery_dataset" "ism" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "market_indexes" {
+  dataset_id  = "market_indexes"
+  description = "Daily equity market indexes from the Yahoo Finance chart API (currently S&P 500 ^GSPC, table daily; OHLCV from 1990, upserted on ticker/observation_date). Stock-price input for the Michigan-sentiment forecasts."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "michigan_sentiment" {
   dataset_id  = "michigan_sentiment"
   description = "University of Michigan Surveys of Consumers: Index of Consumer Sentiment, Current Economic Conditions, and Index of Consumer Expectations with the preliminary/final release distinction modeled explicitly (table surveys_of_consumers), scraped from the SCA homepage + official final-history CSVs (merge-upserted on measure/release_type/observation_month)."

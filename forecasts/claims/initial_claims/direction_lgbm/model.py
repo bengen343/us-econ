@@ -5,13 +5,19 @@ from __future__ import annotations
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 
 from forecasts.claims.initial_claims.direction_lgbm.series import (
-    CALIBRATION_WINDOW_WEEKS,
+    CALIBRATION_CLIP,
+    CALIBRATION_MIN_ORIGINS,
     LGBM_PARAMS,
     TRAIN_FLOOR,
 )
+
+
+def _logit(p: np.ndarray | float) -> np.ndarray | float:
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
 
 
 def _fit(panel: pd.DataFrame, feature_cols: list[str]) -> lgb.LGBMClassifier:
@@ -27,24 +33,20 @@ def _fit(panel: pd.DataFrame, feature_cols: list[str]) -> lgb.LGBMClassifier:
 def _walk_forward_calibration_history(
     panel: pd.DataFrame, feature_cols: list[str], target_origin: pd.Timestamp,
 ) -> pd.DataFrame:
-    """Re-derive predictions over the last CALIBRATION_WINDOW_WEEKS origins
-    prior to `target_origin`, refitting walk-forward, so we have a recent
-    (raw_p_up, y_dir) history to fit isotonic calibration on.
+    """Re-derive predictions over EVERY origin prior to `target_origin`,
+    refitting walk-forward, so we have the full held-out (raw_p_up, y_dir)
+    history to fit Platt calibration on.
 
-    This is the same loop as iter-13's walk-forward eval but bounded to a
-    recent window — enough history to calibrate, not so much that we burn
-    minutes refitting LGBM.
+    This is the same loop as iter-13's walk-forward eval. Expanding (vs the
+    original 26-week window) costs ~0.3s per origin — about a minute over the
+    current history, growing one fit per week — comfortably inside the job's
+    600s budget for years.
     """
     panel = panel.sort_index().copy()
     cutoff = target_origin - pd.Timedelta(days=7)  # last calibration origin
-    cal_start = cutoff - pd.Timedelta(days=7 * (CALIBRATION_WINDOW_WEEKS - 1))
 
-    # Eligible calibration origins: rows in [cal_start, cutoff] with non-null y_dir.
-    cal_origins = panel.index[
-        (panel.index >= cal_start)
-        & (panel.index <= cutoff)
-        & (panel["y_dir"].notna())
-    ]
+    # Eligible calibration origins: every prior row with an observed label.
+    cal_origins = panel.index[(panel.index <= cutoff) & (panel["y_dir"].notna())]
 
     rows = []
     train_floor = pd.Timestamp(TRAIN_FLOOR)
@@ -73,10 +75,11 @@ def fit_predict_and_calibrate(
     """Run the full production model flow for one origin.
 
     Steps:
-      1. Build a walk-forward calibration history over the last N weeks.
+      1. Build the full walk-forward calibration history (expanding).
       2. Fit the final model on ALL eligible training data through target_origin.
       3. Predict raw P(up) for the row at target_origin.
-      4. Fit isotonic on the calibration history and apply to raw P(up).
+      4. Fit Platt scaling (logistic on the raw logit) on the calibration
+         history, apply to raw P(up), clip to CALIBRATION_CLIP.
 
     Returns dict with raw probability, calibrated probability, predicted
     direction, training-row count, and the resolved feature row's audit info.
@@ -104,12 +107,19 @@ def fit_predict_and_calibrate(
     Xte = panel.loc[[target_origin], feature_cols].values
     raw_p = float(final_model.predict_proba(Xte)[0, 1])
 
-    # Isotonic calibration
-    calibrated_p = raw_p  # fallback if history too short
-    if len(cal_hist) >= 8:
-        iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-        iso.fit(cal_hist["raw_p_up"].values, cal_hist["y_dir"].values)
-        calibrated_p = float(iso.predict([raw_p])[0])
+    # Platt calibration (logistic on the raw logit), clipped. Falls back to the
+    # clipped raw probability when the history is too short or one-class
+    # (LogisticRegression needs both outcomes to fit).
+    lo, hi = CALIBRATION_CLIP
+    calibrated_p = float(np.clip(raw_p, lo, hi))
+    if len(cal_hist) >= CALIBRATION_MIN_ORIGINS and cal_hist["y_dir"].nunique() == 2:
+        platt = LogisticRegression(C=1e6)
+        platt.fit(
+            _logit(cal_hist["raw_p_up"].to_numpy()).reshape(-1, 1),
+            cal_hist["y_dir"].to_numpy(),
+        )
+        p = float(platt.predict_proba([[_logit(raw_p)]])[0, 1])
+        calibrated_p = float(np.clip(p, lo, hi))
 
     return {
         "p_up_raw": raw_p,

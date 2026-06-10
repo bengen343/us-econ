@@ -22,8 +22,8 @@ yet observed).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import pandas as pd
 
@@ -51,13 +51,15 @@ def resolve_adp_diff_lag(inputs: PanelInputs, latest_origin: pd.Timestamp) -> in
     at week_ending = latest_origin - lag*7d.
     """
     adp = inputs.adp.set_index("week_ending")[ADP_NER_COL]
-    for lag in [ADP_DIFF_LAG_PRIMARY, *ADP_DIFF_LAG_FALLBACKS]:
+    lags = [ADP_DIFF_LAG_PRIMARY, *ADP_DIFF_LAG_FALLBACKS]
+    for lag in lags:
         ref = latest_origin - pd.Timedelta(days=7 * lag)
         prev = latest_origin - pd.Timedelta(days=7 * (lag + 1))
-        if ref in adp.index and prev in adp.index and pd.notna(adp.loc[ref]) and pd.notna(adp.loc[prev]):
+        if (ref in adp.index and prev in adp.index
+                and pd.notna(adp.loc[ref]) and pd.notna(adp.loc[prev])):
             return lag
     raise RuntimeError(
-        f"No ADP NSA NER value available at any of lag {[ADP_DIFF_LAG_PRIMARY, *ADP_DIFF_LAG_FALLBACKS]} "
+        f"No ADP NSA NER value available at any of lag {lags} "
         f"weeks before origin {latest_origin.date()}; latest ADP week is "
         f"{adp.dropna().index.max().date()}"
     )

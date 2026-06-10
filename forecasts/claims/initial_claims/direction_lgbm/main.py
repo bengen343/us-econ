@@ -3,7 +3,7 @@
 Flow:
   1. Pull SA, Trends, ADP data from BigQuery.
   2. Build the panel and resolve the freshest valid ADP lag for today's origin.
-  3. Train LGBM + isotonic calibration walk-forward.
+  3. Train LGBM + Platt calibration walk-forward (expanding history).
   4. Look up the latest existing generation in forecast_sa_initial_claims for
      the same data_through and horizon=1.
   5. UPDATE that row's direction columns. Idempotent (re-running overwrites).
@@ -173,7 +173,8 @@ def main() -> None:
     adp = _pull_adp(client)
     log.info("inputs loaded", extra={"extras": {
         "sa_rows": len(sa), "sa_last_week": sa["week_ending"].max().date().isoformat(),
-        "trends_rows": len(trends), "trends_last_week": trends["week_ending"].max().date().isoformat(),
+        "trends_rows": len(trends),
+        "trends_last_week": trends["week_ending"].max().date().isoformat(),
         "adp_rows": len(adp), "adp_last_week": adp["week_ending"].max().date().isoformat(),
     }})
 

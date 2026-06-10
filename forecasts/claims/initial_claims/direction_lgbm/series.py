@@ -51,11 +51,19 @@ TRENDS_LAG = 4
 # floor that all post-floor iterations built on.
 TARGET_LAGS = list(range(1, 9))
 
-# Calibration: walk-forward isotonic over the prior 26 weeks of held-out
-# predictions. The user picked raw-probability (point-accuracy) optimisation
-# in iter-13, but calibrated probability is still emitted alongside for any
-# downstream narrative consumer that wants honest confidence.
-CALIBRATION_WINDOW_WEEKS = 26
+# Calibration: walk-forward Platt scaling (logistic on the raw logit) over ALL
+# prior held-out predictions (expanding window), output clipped. Replaced the
+# original 26-week rolling isotonic in 2026-06: isotonic needs ~1000+ points
+# and on 26 it mapped extreme bins to empirical 0/1 — production emitted
+# p_up=0.001 the week claims rose 13k. Out-of-sample over 150 origins: Platt
+# Brier 0.249 / logloss 0.69 / zero extreme-and-wrong calls, vs isotonic-26
+# 0.289 / 1.76 / 8, vs raw 0.358 / 2.16 / 36. The expanding refit loop costs
+# ~0.3s per origin (~1 min today), well inside the 600s job budget.
+# pred_dir_up stays thresholded on the RAW probability (the iter-13
+# point-accuracy choice); Platt is monotone so only the implicit threshold
+# would differ, and the calibrated channel exists for honest confidence.
+CALIBRATION_MIN_ORIGINS = 30  # below this, fall back to the (clipped) raw p
+CALIBRATION_CLIP = (0.05, 0.95)
 
 # BQ table holding both the existing level forecast and the new direction
 # columns (added by 11_direction_columns_migration.sql).

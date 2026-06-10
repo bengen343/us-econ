@@ -499,6 +499,38 @@ module "energy_futures" {
   ]
 }
 
+module "census_construction" {
+  source = "./modules/cloud_run_job"
+
+  name       = "census-construction"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.census_construction"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The New Residential Construction release lands ~the 16th-19th of each
+  # month at 08:30 ET (the exact workday drifts). Cron fires daily at 09:00 MT
+  # through that window; each run re-appends the current workbook contents
+  # (append-only, vintage-stamped -- consumers dedupe by ingested_at), so
+  # pre-release days just restate the prior vintage and the post-release run
+  # captures the new month + its two months of revisions.
+  schedule          = "0 9 16-20 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.census_construction,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_census_construction_editor,
+  ]
+}
+
 module "market_indexes" {
   source = "./modules/cloud_run_job"
 

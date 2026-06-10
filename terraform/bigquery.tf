@@ -73,6 +73,14 @@ resource "google_bigquery_dataset" "ism" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "census_construction" {
+  dataset_id  = "census_construction"
+  description = "Census/HUD New Residential Construction: housing starts, building permits, completions, and units under construction (US total + 1-unit/2-4/5+ segments, SA annual rate + NSA, table new_residential_construction), parsed from the official census.gov history workbooks (append-only, vintage-stamped -- the series revise for two months after first print)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "market_indexes" {
   dataset_id  = "market_indexes"
   description = "Daily equity market indexes from the Yahoo Finance chart API (currently S&P 500 ^GSPC, table daily; OHLCV from 1990, upserted on ticker/observation_date). Stock-price input for the Michigan-sentiment forecasts."

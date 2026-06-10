@@ -315,6 +315,47 @@ module "airfares_forecast" {
   ]
 }
 
+module "ppi_headline_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-ppi-headline-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_ppi.headline_yy.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released headline PPI final demand y/y (WPUFD4,
+  # NSA; plus m/m and the index level) one month ahead. Only the month-M m/m
+  # is unknown -- the 12-month base is published -- and PPI prices reference
+  # the Tuesday of the week containing the 13th, so the winning OLS uses
+  # gasoline-spot + diesel changes dated to that pricing date plus the month-M
+  # ISM mfg prices-paid print (released the 1st business day of M+1, before
+  # the PPI). 2017-2026 COVID-masked backtest: y/y RMSE 0.29pp vs 0.58 for the
+  # y/y random walk. Same cadence as the CPI forecasts: daily on days 1-15 at
+  # 05:00 MT, gated in code to the first ~18 days, idempotent upsert by
+  # as_of_date; idles until the month-M ISM print lands. Self-bootstraps its
+  # table + _current view. Reads bls_ppi.ppi_series, eia_petroleum.prices, and
+  # ism.report_on_business; writes bls_ppi.forecast_headline.
+  schedule          = "0 5 1-15 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_ppi,
+    google_bigquery_dataset.eia_petroleum,
+    google_bigquery_dataset.ism,
+    google_bigquery_dataset_iam_member.runner_bls_ppi_editor,
+    google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
+    google_bigquery_dataset_iam_member.runner_ism_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

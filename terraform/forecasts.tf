@@ -215,6 +215,38 @@ module "gasoline_cpi_forecast" {
   ]
 }
 
+module "shelter_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bls-shelter-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bls_cpi.shelter.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released CPI shelter index (CUSR0000SAH1, SA
+  # level + m/m %) with the trailing-6-month-mean nowcast (see
+  # forecasts/bls_cpi/shelter -- persistence beat every fitted spec and all
+  # ZORI market-rent features at the one-month horizon). Same cadence as the
+  # CPI forecast: daily on days 1-15 at 05:00 MT, gated in code to the first
+  # ~18 days, idempotent upsert by as_of_date. Self-bootstraps its table +
+  # _current view. Reads bls_cpi.cpi_series only.
+  schedule          = "0 5 1-15 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bls_cpi,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

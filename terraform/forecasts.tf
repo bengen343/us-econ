@@ -356,6 +356,47 @@ module "ppi_headline_forecast" {
   ]
 }
 
+module "michigan_sentiment_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "michigan-sentiment-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.michigan_sentiment.headline.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the pending Michigan ICS release -- the next preliminary (vs
+  # the prior final) or the current month's final (the revision vs the
+  # published prelim); the pending target alternates so each run emits one.
+  # Winning OLS specs use gasoline-spot + S&P 500 changes over the survey
+  # interview windows (prelim interviews ~25th of M-1 .. 7th of M; the final
+  # adds ~days 8-21). 2010-2026 COVID-masked: prelim RMSE 3.61 vs 3.89
+  # carry-forward; revision RMSE 1.35 vs 1.43 zero-revision, ~64% direction.
+  # Daily at 07:30 MT, after the 07:00 eia_petroleum + market_indexes
+  # collections; idempotent upsert by as_of_date. Self-bootstraps its table +
+  # _current view. Reads michigan_sentiment.surveys_of_consumers,
+  # eia_petroleum.prices, market_indexes.daily; writes
+  # michigan_sentiment.forecast_headline.
+  schedule          = "30 7 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.michigan_sentiment,
+    google_bigquery_dataset.eia_petroleum,
+    google_bigquery_dataset.market_indexes,
+    google_bigquery_dataset_iam_member.runner_michigan_sentiment_editor,
+    google_bigquery_dataset_iam_member.runner_eia_petroleum_editor,
+    google_bigquery_dataset_iam_member.runner_market_indexes_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

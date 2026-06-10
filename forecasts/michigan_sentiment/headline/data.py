@@ -152,6 +152,27 @@ def pull_eia_series(series_id: str, client=None) -> pd.Series:
     )
 
 
+def pull_sp500_bq(client=None) -> pd.Series:
+    """S&P 500 daily closes from BigQuery (collectors/market_indexes; the
+    production path -- the harness pulls Yahoo directly)."""
+    from google.cloud import bigquery
+
+    client = client or bigquery.Client(project=PROJECT)
+    sql = f"""
+    SELECT observation_date, close
+    FROM `{PROJECT}.market_indexes.daily`
+    WHERE ticker = @ticker
+    ORDER BY observation_date
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("ticker", "STRING", SP500_TICKER)]
+    )
+    frame = client.query(sql, job_config=job_config).to_dataframe()
+    return pd.Series(
+        frame["close"].to_numpy(dtype=float), index=pd.to_datetime(frame["observation_date"])
+    )
+
+
 def pull_sp500() -> pd.Series:
     """S&P 500 daily closes from the Yahoo chart API (explicit period bounds:
     range=max silently downsamples to monthly)."""

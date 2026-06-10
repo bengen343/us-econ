@@ -115,7 +115,26 @@ def collect(settings: Settings) -> LoadSpec:
         extra={"extras": {"rows": len(csv_rows), "last_final": str(last_final)}},
     )
 
-    return LoadSpec(table=TABLE, schema=SCHEMA, rows=rows + csv_rows, merge_keys=MERGE_KEYS)
+    # When the homepage shows a FINAL, its rows and the CSV's rows for that
+    # month share merge keys, and two source rows per key break the BigQuery
+    # MERGE ("UPDATE/MERGE must match at most one source row for each target
+    # row" -- same failure mode as the EIA duplicates). Collapse on the merge
+    # keys; homepage rows are listed last so they win (they carry
+    # release_date).
+    return LoadSpec(
+        table=TABLE, schema=SCHEMA, rows=_dedupe(csv_rows + rows), merge_keys=MERGE_KEYS
+    )
+
+
+def _dedupe(rows: list[dict]) -> list[dict]:
+    """Collapse duplicate merge-key rows, last occurrence wins."""
+    by_key: dict[tuple, dict] = {}
+    for row in rows:
+        by_key[tuple(row[key] for key in MERGE_KEYS)] = row
+    dropped = len(rows) - len(by_key)
+    if dropped:
+        _log.info("dropped duplicate merge-key rows", extra={"extras": {"dropped": dropped}})
+    return list(by_key.values())
 
 
 def _prior_month(d: date) -> date:

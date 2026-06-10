@@ -45,6 +45,8 @@ def build_features(inputs: dict, extra_months: list[pd.Timestamp] | None = None)
 
     ``extra_months`` extends the index past the published Michigan history so
     a live target month gets its (already observable) regressors computed.
+    Research-only inputs (``gas_retail``, ``dnsi``, ``cb``) are optional --
+    production panels carry only the winners' inputs.
     """
     michigan: pd.DataFrame = inputs["michigan"]
     index = michigan.index
@@ -75,11 +77,12 @@ def build_features(inputs: dict, extra_months: list[pd.Timestamp] | None = None)
     p["dgas_m1"] = spot_month.pct_change().shift(1) * 100
     p["dgas_late"] = (spot_mid / spot_early - 1) * 100
 
-    retail_early = month_window_mean(inputs["gas_retail"], 1, 8).reindex(p.index)
-    retail_mid = month_window_mean(inputs["gas_retail"], 9, 22).reindex(p.index)
-    retail_month = month_mean(inputs["gas_retail"]).reindex(p.index)
-    p["dretail_early"] = (retail_early / retail_month.shift(1) - 1) * 100
-    p["dretail_late"] = (retail_mid / retail_early - 1) * 100
+    if "gas_retail" in inputs:
+        retail_early = month_window_mean(inputs["gas_retail"], 1, 8).reindex(p.index)
+        retail_mid = month_window_mean(inputs["gas_retail"], 9, 22).reindex(p.index)
+        retail_month = month_mean(inputs["gas_retail"]).reindex(p.index)
+        p["dretail_early"] = (retail_early / retail_month.shift(1) - 1) * 100
+        p["dretail_late"] = (retail_mid / retail_early - 1) * 100
 
     # Stocks.
     sp_early = month_window_mean(inputs["sp500"], 1, 7).reindex(p.index)
@@ -93,28 +96,32 @@ def build_features(inputs: dict, extra_months: list[pd.Timestamp] | None = None)
     # x100). The early window stops at day 5 -- the index updates weekly with
     # a few days' lag, so day 5 is what's reliably published by the prelim
     # origin (~day 10).
-    dnsi_early = month_window_mean(inputs["dnsi"], 1, 5).reindex(p.index)
-    dnsi_mid = month_window_mean(inputs["dnsi"], 8, 18).reindex(p.index)
-    dnsi_window_early = month_window_mean(inputs["dnsi"], 1, 7).reindex(p.index)
-    dnsi_month = month_mean(inputs["dnsi"]).reindex(p.index)
-    p["ddnsi_early"] = (dnsi_early - dnsi_month.shift(1)) * 100
-    p["ddnsi_m1"] = dnsi_month.diff().shift(1) * 100
-    p["ddnsi_late"] = (dnsi_mid - dnsi_window_early) * 100
+    if "dnsi" in inputs:
+        dnsi_early = month_window_mean(inputs["dnsi"], 1, 5).reindex(p.index)
+        dnsi_mid = month_window_mean(inputs["dnsi"], 8, 18).reindex(p.index)
+        dnsi_window_early = month_window_mean(inputs["dnsi"], 1, 7).reindex(p.index)
+        dnsi_month = month_mean(inputs["dnsi"]).reindex(p.index)
+        p["ddnsi_early"] = (dnsi_early - dnsi_month.shift(1)) * 100
+        p["ddnsi_m1"] = dnsi_month.diff().shift(1) * 100
+        p["ddnsi_late"] = (dnsi_mid - dnsi_window_early) * 100
 
     # Conference Board confidence, lag 1 (the month-M CB release can land
     # after the Michigan final -- only M-1 is safe at either origin).
-    cb = inputs["cb"].reindex(p.index)
-    p["dcb_1"] = cb.diff().shift(1)
+    if "cb" in inputs:
+        cb = inputs["cb"].reindex(p.index)
+        p["dcb_1"] = cb.diff().shift(1)
 
     # Survey-window-aligned variants: the prelim interviews run ~day 25 of
     # M-1 through ~day 7 of M, so the sharpest "what changed between surveys"
     # regressor is the survey-window-to-survey-window change.
     for name, series, kind in (
         ("gas_sw", inputs["gas_spot"], "pct"),
-        ("retail_sw", inputs["gas_retail"], "pct"),
+        ("retail_sw", inputs.get("gas_retail"), "pct"),
         ("sp_sw", inputs["sp500"], "pct"),
-        ("dnsi_sw", inputs["dnsi"], "diff"),
+        ("dnsi_sw", inputs.get("dnsi"), "diff"),
     ):
+        if series is None:
+            continue
         end_day = 5 if name == "dnsi_sw" else 7  # DNSI publishes with a lag
         window = survey_window_mean(series, 25, end_day).reindex(p.index)
         if kind == "pct":

@@ -499,3 +499,38 @@ module "sp_global_pmi" {
   ]
 }
 
+
+module "manheim_used_vehicles" {
+  source = "./modules/cloud_run_job"
+
+  name       = "manheim-used-vehicles"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.manheim_used_vehicles"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Cox Automotive posts the full-month Manheim index on the 5th business day
+  # of the following month (calendar day 5-9 incl. holiday slips). Cron fires
+  # daily at 09:00 MT across a 5-12 window; the collector probes the templated
+  # release-post URL (last month first, then the month before) and is a cheap
+  # no-op until the post appears. Each successful run re-pulls the spreadsheet's
+  # full 1997+ history vintage-stamped, so a missed day self-heals and the CPI
+  # forecast (05:00 MT, days 1-15) picks the value up the morning after it
+  # lands -- ahead of the mid-month CPI release. (Unix-cron can't express "Nth
+  # business day", so we widen the window and gate in code.)
+  schedule          = "0 9 5-12 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.manheim_used_vehicles,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_manheim_used_vehicles_editor,
+  ]
+}

@@ -120,3 +120,11 @@ resource "google_bigquery_dataset" "energy_futures" {
 
   depends_on = [google_project_service.enabled]
 }
+
+resource "google_bigquery_dataset" "manheim_used_vehicles" {
+  dataset_id  = "manheim_used_vehicles"
+  description = "Manheim Used Vehicle Value Index (Cox Automotive): monthly wholesale used-vehicle SA index (1997-01 = 100), SA/NSA dollar prices, and seasonal factors, parsed from the spreadsheet attached to each monthly release post. The best free leading indicator for CPI used cars & trucks (~1-2 month wholesale-to-retail lag; month M's value is published on the 5th business day of M+1, before M's CPI release). Every run re-pulls the full 1997+ history, append-only and vintage-stamped, so revisions (e.g. seasonal-factor re-estimation) are preserved and downstream takes the latest vintage per (measure, observation_month)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}

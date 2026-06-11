@@ -90,32 +90,30 @@ def wf_lgbm(p: pd.DataFrame, cols: list[str], refit_every: int = 12) -> pd.Serie
     return out
 
 
+# PIT NOTE (discovered 2026-06-10): BEA's official month-M vehicle SAAR now
+# publishes ~the 25th of M+1 -- AFTER the MARTS release -- so dveh_0 is NOT
+# point-in-time legal (the start-of-month "auto sales day" died when the
+# manufacturers went quarterly; early-month SAARs are private estimators we
+# cannot cleanly collect). dveh_0 specs are kept as an upper-bound REFERENCE
+# (prefixed x_); production candidates use vehicles at lag 1+ only.
 SPECS_OLS: dict[str, list[str]] = {
     "ar1": ["drs_1"],
     "ar2": ["drs_1", "drs_2"],
-    "veh": ["dveh_0"],
     "gas": ["dgas_0"],
     "cpi": ["dcpi_0"],
-    "veh_gas": ["dveh_0", "dgas_0"],
-    "veh_gas_ar": ["dveh_0", "dgas_0", "drs_1"],
-    "veh_gas_cpi": ["dveh_0", "dgas_0", "dcpi_0"],
-    "full": ["dveh_0", "dgas_0", "dcpi_0", "drs_1"],
-    "full_nocpi": ["dveh_0", "dgas_0", "drs_1", "drs_2"],
-    "full_sent": ["dveh_0", "dgas_0", "dcpi_0", "drs_1", "dsent_0"],
-    "veh_lags": ["dveh_0", "dveh_1", "dgas_0", "drs_1"],
-    "kitchen": ["dveh_0", "dveh_1", "dgas_0", "dgas_1", "dcpi_0", "drs_1", "drs_2", "dsent_0"],
+    "veh1": ["dveh_1"],
+    "gas_ar": ["dgas_0", "drs_1"],
+    "gas_ar2": ["dgas_0", "drs_1", "drs_2"],
+    "gas_veh1": ["dgas_0", "dveh_1"],
+    "gas_veh1_ar": ["dgas_0", "dveh_1", "drs_1"],
+    "gas_cpi_ar": ["dgas_0", "dcpi_0", "drs_1"],
+    "gas_veh1_cpi_ar": ["dgas_0", "dveh_1", "dcpi_0", "drs_1"],
+    "gas_sent_ar": ["dgas_0", "dsent_0", "drs_1"],
+    "kitchen": ["dgas_0", "dgas_1", "dveh_1", "dcpi_0", "drs_1", "drs_2", "dsent_0"],
+    "x_veh_gas_ar": ["dveh_0", "dgas_0", "drs_1"],  # NOT PIT-legal -- reference only
+    "x_full_nocpi": ["dveh_0", "dgas_0", "drs_1", "drs_2"],  # NOT PIT-legal -- reference
 }
-LGBM_COLS = [
-    "dveh_0",
-    "dveh_1",
-    "dgas_0",
-    "dgas_1",
-    "dcpi_0",
-    "dcpi_1",
-    "drs_1",
-    "drs_2",
-    "dsent_0",
-]
+LGBM_COLS = ["dveh_1", "dgas_0", "dgas_1", "dcpi_0", "dcpi_1", "drs_1", "drs_2", "dsent_0"]
 
 
 def run_bakeoff(p: pd.DataFrame) -> pd.DataFrame:

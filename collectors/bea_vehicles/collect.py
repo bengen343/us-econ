@@ -9,17 +9,17 @@ Expenditures, and Price", monthly from 1967/1976):
     https://apps.bea.gov/api/data?method=GetData&DataSetName=NIUnderlyingDetail
         &TableName=U70205S&Frequency=M&Year=...
 
-The table gets its preliminary month ~the 2nd business day of M+1 (the
-"Supplemental Estimates: Motor Vehicles" update FRED's TOTALSA mirrors) and
-revisions around day 20. Requires the free registered key (Secret Manager:
-``bea-api-key``). The static Section7All workbook regenerates only with the
-NIPA cycle and lags weeks -- it is NOT a substitute for the current month.
-
-Vehicle sales are the month-M auto input of the retail-sales forecast
-(forecasts/census_retail/headline_mm): motor vehicle & parts dealers are
-~20% of the MARTS headline. The light-vehicle total the forecast uses is
-SAART + TEMF + TEMG (autos SAAR, millions + light trucks <=14k lbs domestic
-+ imported SAAR), computed downstream from the per-series rows landed here.
+TIMING (verified 2026-06): the "Supplemental Estimates, Motor Vehicles"
+update lands ~the 25th of M+1 -- the start-of-month "auto sales day" died
+when the manufacturers moved to quarterly reporting; early-month SAARs in
+the press are private estimators (Wards/NADA/S&P), not BEA. Month-M BEA
+data is therefore NOT available before the mid-(M+1) MARTS release, which
+is why the retail-sales forecast's winning spec carries no vehicle term
+(forecasts/census_retail/headline_mm -- dveh_0 topped the raw leaderboard
+but is not point-in-time legal). This collector lands the series as general
+macro inputs (lag-1+ is PIT-clean for mid-month forecasts; the light-vehicle
+total is SAART + TEMF + TEMG). Requires the free registered key (Secret
+Manager: ``bea-api-key``).
 
 EIA-style MERGE upsert on (series_code, observation_month): BEA restates the
 recent months in place (preliminary -> ~day-20 revision -> NIPA benchmark),
@@ -103,14 +103,25 @@ def collect(settings: Settings) -> LoadSpec:
     return LoadSpec(table=TABLE, schema=SCHEMA, rows=_dedupe(rows), merge_keys=MERGE_KEYS)
 
 
-def call_with_error_check(call) -> dict:
-    """BEA returns HTTP 200 with an error block on bad requests -- surface it."""
-    body = with_retries(call)
-    results = (body.get("BEAAPI") or {}).get("Results") or {}
-    error = results.get("Error") or (body.get("BEAAPI") or {}).get("Error")
-    if error:
-        raise RuntimeError(f"BEA API error: {error}")
-    return body
+def call_with_error_check(call, attempts: int = 3) -> dict:
+    """BEA returns HTTP 200 with an error block on bad requests, so
+    with_retries can't see failures -- surface them, retrying a couple of
+    times first (BEA's load-balanced nodes are occasionally inconsistent;
+    notably, a freshly activated key propagates node-by-node, surfacing as
+    intermittent APIErrorCode 4 'UserId is not active')."""
+    import time
+
+    error = None
+    for attempt in range(attempts):
+        body = with_retries(call)
+        results = (body.get("BEAAPI") or {}).get("Results") or {}
+        error = results.get("Error") or (body.get("BEAAPI") or {}).get("Error")
+        if not error:
+            return body
+        if attempt < attempts - 1:
+            _log.warning("BEA API error body; retrying", extra={"extras": {"error": str(error)}})
+            time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"BEA API error: {error}")
 
 
 def _parse(body: dict) -> list[dict]:

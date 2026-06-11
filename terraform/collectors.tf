@@ -575,14 +575,14 @@ module "bea_vehicles" {
 
   service_account_email = google_service_account.runner.email
 
-  # BEA's U70205S table gets the preliminary month ~the 2nd business day of
-  # M+1 (the supplemental motor-vehicle update) and revisions ~day 20. Cron
-  # fires daily at 08:00 MT on days 2-22: the early runs capture the new
-  # month ahead of the retail-sales forecast's pre-release window (MARTS
-  # ~the 15th-17th), the late ones the day-20 revision. Full-history re-pull,
-  # MERGE upsert on (series_code, observation_month). Requires the free BEA
-  # API key (Secret Manager: bea-api-key).
-  schedule          = "0 8 2-22 * *"
+  # BEA's U70205S table gets month M with the "Supplemental Estimates, Motor
+  # Vehicles" update ~the 25th of M+1 (verified 2026-06: the start-of-month
+  # auto-sales-day cadence is long gone -- early-month SAARs are private
+  # estimators, not BEA). Cron fires daily at 08:00 MT on days 24-28 to
+  # capture that update. Full-history re-pull, MERGE upsert on (series_code,
+  # observation_month). Requires the free BEA API key (Secret Manager:
+  # bea-api-key).
+  schedule          = "0 8 24-28 * *"
   schedule_timezone = "America/Denver"
   timeout           = "300s"
   memory            = "512Mi"

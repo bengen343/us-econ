@@ -99,7 +99,7 @@ resource "google_bigquery_dataset" "noaa_climate" {
 
 resource "google_bigquery_dataset" "bea_vehicles" {
   dataset_id  = "bea_vehicles"
-  description = "BEA light-vehicle unit sales (autos + light trucks, SAAR and NSA, 1967+, table unit_sales) from API table U70205S, upserted on series_code/observation_month. Month-M auto input of the retail-sales forecast (preliminary month posts ~2nd business day of M+1)."
+  description = "BEA light-vehicle unit sales (autos + light trucks, SAAR and NSA, 1967+, table unit_sales) from API table U70205S, upserted on series_code/observation_month. General macro input; month M posts ~the 25th of M+1 (the Supplemental Estimates, Motor Vehicles update) -- too late for the same-month MARTS forecast, PIT-clean at lag 1+."
   location    = var.bq_location
 
   depends_on = [google_project_service.enabled]

@@ -16,12 +16,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-# Bake-off winner (2010-2026 COVID-masked: m/m RMSE 0.66 vs 0.88 zero, -25%;
-# 0.71 vs 0.95 on 2017+; MAE 0.51, ~77% direction): month-M vehicle-sales and
-# gas-price changes + the own lag. CPI month M HURT (0.71->0.77 RMSE) -- so
-# production carries no CPI release-ordering risk; sentiment and extra lags
-# added nothing; LightGBM lost (see harness/README leaderboard).
-SPEC_COLS: list[str] = ["dveh_0", "dgas_0", "drs_1"]
+# Bake-off winner among PIT-LEGAL specs (2010-2026 COVID-masked: m/m RMSE
+# 0.72 vs 0.87 zero, -17%; 0.78 vs 0.95 on 2017+; MAE 0.54, ~74% direction):
+# the month-M gas-price change + two own lags. BEA's official month-M vehicle
+# SAAR publishes ~the 25th of M+1 -- AFTER the MARTS release -- so the
+# dveh_0 specs that topped the raw leaderboard (RMSE 0.65-0.66) are not
+# usable in production; vehicles at lag 1 added nothing. CPI month M hurt;
+# sentiment and LightGBM lost (see harness/README leaderboard).
+SPEC_COLS: list[str] = ["dgas_0", "drs_1", "drs_2"]
 MIN_TRAIN = 96  # months; the joint panel starts 2000 (EIA gas in BigQuery)
 
 

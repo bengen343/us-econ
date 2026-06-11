@@ -105,6 +105,14 @@ resource "google_bigquery_dataset" "bea_vehicles" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "bea_pce" {
+  dataset_id  = "bea_pce"
+  description = "BEA monthly PCE price indexes (NIPA table T20804, 1959+, table price_indexes): headline, core (DPCCRG -- the core-PCE forecast target), components, and market-based variants, from the BEA API (append-only, vintage-stamped -- PCE revises at each release and re-benchmarks annually)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "census_retail" {
   dataset_id  = "census_retail"
   description = "Census Advance Monthly Retail Trade Survey (MARTS): advance retail & food services sales by kind of business (SA, $M, 1992+, table advance_retail_sales), parsed from the per-NAICS time-series txt files on census.gov (append-only, vintage-stamped -- advance prints are revised by MRTS and re-benchmarked annually)."

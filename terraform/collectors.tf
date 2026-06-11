@@ -562,6 +562,41 @@ module "nahb_hmi" {
   ]
 }
 
+module "bea_pce" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bea-pce"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.bea_pce"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Personal Income and Outlays (with the PCE price indexes) lands ~the
+  # 25th-31st of each month at 08:30 ET (the exact workday drifts; some
+  # months release as late as the 1st-2nd of the next). Cron fires daily at
+  # 09:00 MT through that window; each run re-appends the full T20804 table
+  # (append-only, vintage-stamped -- consumers dedupe by ingested_at), so
+  # pre-release days restate the prior vintage and the post-release run
+  # captures the new month + revisions. Requires the BEA API key
+  # (Secret Manager: bea-api-key).
+  schedule          = "0 9 24-31,1-2 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bea_pce,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_bea_pce_editor,
+    google_secret_manager_secret_iam_member.runner_bea_key_accessor,
+  ]
+}
+
 module "bea_vehicles" {
   source = "./modules/cloud_run_job"
 

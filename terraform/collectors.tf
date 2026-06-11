@@ -562,6 +562,38 @@ module "nahb_hmi" {
   ]
 }
 
+module "census_retail" {
+  source = "./modules/cloud_run_job"
+
+  name       = "census-retail"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.census_retail"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The MARTS advance release lands ~the 15th-17th of each month at 08:30 ET
+  # (~10 business days after month end; the exact workday drifts). Cron fires
+  # daily at 09:00 MT through that window; each run re-appends the current
+  # txt-file contents (append-only, vintage-stamped -- consumers dedupe by
+  # ingested_at), so pre-release days restate the prior vintage and the
+  # post-release run captures the new month + its MRTS revisions.
+  schedule          = "0 9 14-19 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.census_retail,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_census_retail_editor,
+  ]
+}
+
 module "noaa_climate" {
   source = "./modules/cloud_run_job"
 

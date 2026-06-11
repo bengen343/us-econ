@@ -82,6 +82,12 @@ resource "google_bigquery_dataset_iam_member" "runner_noaa_climate_editor" {
   member     = "serviceAccount:${google_service_account.runner.email}"
 }
 
+resource "google_bigquery_dataset_iam_member" "runner_census_retail_editor" {
+  dataset_id = google_bigquery_dataset.census_retail.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.runner.email}"
+}
+
 resource "google_bigquery_dataset_iam_member" "runner_market_indexes_editor" {
   dataset_id = google_bigquery_dataset.market_indexes.dataset_id
   role       = "roles/bigquery.dataEditor"

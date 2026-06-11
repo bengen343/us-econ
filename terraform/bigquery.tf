@@ -97,6 +97,14 @@ resource "google_bigquery_dataset" "noaa_climate" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "census_retail" {
+  dataset_id  = "census_retail"
+  description = "Census Advance Monthly Retail Trade Survey (MARTS): advance retail & food services sales by kind of business (SA, $M, 1992+, table advance_retail_sales), parsed from the per-NAICS time-series txt files on census.gov (append-only, vintage-stamped -- advance prints are revised by MRTS and re-benchmarked annually)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "market_indexes" {
   dataset_id  = "market_indexes"
   description = "Daily equity market indexes from the Yahoo Finance chart API (currently S&P 500 ^GSPC, table daily; OHLCV from 1990, upserted on ticker/observation_date). Stock-price input for the Michigan-sentiment forecasts."

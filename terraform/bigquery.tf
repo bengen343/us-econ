@@ -89,6 +89,14 @@ resource "google_bigquery_dataset" "nahb_hmi" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "noaa_climate" {
+  dataset_id  = "noaa_climate"
+  description = "NOAA NCEI Climate at a Glance: contiguous-US monthly average temperature (1959+, table climate_at_a_glance; measure/region dimensions for future series), from the keyless CAG CSV endpoint (append-only, vintage-stamped). Weather input of the housing-starts forecast."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "market_indexes" {
   dataset_id  = "market_indexes"
   description = "Daily equity market indexes from the Yahoo Finance chart API (currently S&P 500 ^GSPC, table daily; OHLCV from 1990, upserted on ticker/observation_date). Stock-price input for the Michigan-sentiment forecasts."

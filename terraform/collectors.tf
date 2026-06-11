@@ -562,6 +562,36 @@ module "nahb_hmi" {
   ]
 }
 
+module "noaa_climate" {
+  source = "./modules/cloud_run_job"
+
+  name       = "noaa-climate"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.noaa_climate"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # NCEI posts month M ~the 8th of M+1. Cron fires at 09:00 MT on days 9-12
+  # so the month-M temperature is in BigQuery before the housing-starts
+  # forecast's pre-release window (the NRC release lands ~the 16th-19th).
+  # Append-only, vintage-stamped; tiny payload (~800 rows).
+  schedule          = "0 9 9-12 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.noaa_climate,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_noaa_climate_editor,
+  ]
+}
+
 module "market_indexes" {
   source = "./modules/cloud_run_job"
 

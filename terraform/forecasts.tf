@@ -476,6 +476,43 @@ module "core_pce_forecast" {
   ]
 }
 
+module "ism_mfg_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "ism-mfg-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.ism.manufacturing_pmi.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the headline ISM Manufacturing PMI for month M (released the
+  # 1st business day of M+1, 10:00 ET) from the month-M S&P flash gap + the
+  # equal-weight regional-Fed-survey composite gap + the own lag. Flash-era
+  # backtest (2018+, COVID-masked): change RMSE 1.07 vs 1.20 random walk.
+  # Daily at 11:00 MT; the window self-gates -- before the month-M flash
+  # (~21st-24th) the shared model returns None and the job idles, then
+  # re-nowcasts daily as the late Fed surveys (Richmond, Dallas) arrive.
+  # Idempotent upsert by as_of_date; self-bootstraps its table + _current
+  # view. Reads ism.report_on_business, ism.sp_global_us_pmi,
+  # fed_surveys.manufacturing_surveys; writes ism.forecast_manufacturing_pmi.
+  schedule          = "0 11 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.ism,
+    google_bigquery_dataset.fed_surveys,
+    google_bigquery_dataset_iam_member.runner_ism_editor,
+    google_bigquery_dataset_iam_member.runner_fed_surveys_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

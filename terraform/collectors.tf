@@ -246,6 +246,39 @@ module "michigan_sentiment" {
   ]
 }
 
+module "fed_surveys" {
+  source = "./modules/cloud_run_job"
+
+  name       = "fed-surveys"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.fed_surveys"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The four surveys release DURING the survey month: Empire ~the 15th
+  # (08:30 ET), Philly the 3rd Thursday (08:30 ET), Richmond the 4th Tuesday
+  # (10:00 ET), Dallas the last Monday (10:30 ET). Cron fires daily at 09:00
+  # MT on days 15-31; each run re-appends all four full-history files
+  # (append-only, vintage-stamped -- consumers dedupe by ingested_at), so the
+  # post-release runs pick up each bank's new month ahead of the ISM
+  # Manufacturing forecast's pre-release window (~month end).
+  schedule          = "0 9 15-31 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.fed_surveys,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_fed_surveys_editor,
+  ]
+}
+
 module "ism" {
   source = "./modules/cloud_run_job"
 

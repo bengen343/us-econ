@@ -121,6 +121,14 @@ resource "google_bigquery_dataset" "census_retail" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "fed_surveys" {
+  dataset_id  = "fed_surveys"
+  description = "Regional Fed manufacturing surveys: Empire State, Philly Fed, Richmond Fed, Dallas Fed headline SA diffusion indexes (+/- balances, table manufacturing_surveys), from each bank's official history file (append-only, vintage-stamped -- seasonal factors restate annually). Month-M survey inputs of the ISM Manufacturing forecast."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "market_indexes" {
   dataset_id  = "market_indexes"
   description = "Daily equity market indexes from the Yahoo Finance chart API (currently S&P 500 ^GSPC, table daily; OHLCV from 1990, upserted on ticker/observation_date). Stock-price input for the Michigan-sentiment forecasts."

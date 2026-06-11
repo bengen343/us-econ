@@ -397,6 +397,46 @@ module "michigan_sentiment_forecast" {
   ]
 }
 
+module "starts_permits_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "census-starts-permits-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.census_construction.starts_permits.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts next month's housing starts + building permits (SAAR level +
+  # m/m % each) ahead of the joint NRC release (~16th-19th, 08:30 ET).
+  # Starts: permits/starts ECM gap + month-M NAHB HMI + NOAA temperature
+  # deviations (2010-2026 COVID-masked: m/m RMSE 6.27 vs 8.24 carry-forward,
+  # ~76% direction). Permits: SF/MF-split AR (4.63 vs 5.03). Daily at 10:00
+  # MT days 1-20 (gated in code to day <= 20), after the 09:00 collector
+  # runs; the permits spec completes right after the prior release, the
+  # starts spec once the month-M temperature posts (~the 9th). Idempotent
+  # upsert by as_of_date; self-bootstraps its table + _current view. Reads
+  # census_construction, nahb_hmi, noaa_climate; writes
+  # census_construction.forecast_starts_permits.
+  schedule          = "0 10 1-20 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.census_construction,
+    google_bigquery_dataset.nahb_hmi,
+    google_bigquery_dataset.noaa_climate,
+    google_bigquery_dataset_iam_member.runner_census_construction_editor,
+    google_bigquery_dataset_iam_member.runner_nahb_hmi_editor,
+    google_bigquery_dataset_iam_member.runner_noaa_climate_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

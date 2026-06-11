@@ -120,6 +120,73 @@ def pull_tavg() -> pd.Series:
     return pd.Series(frame["Value"].to_numpy(dtype=float), index=months).sort_index()
 
 
+PROJECT = "us-econ-51920"
+
+
+def pull_census_bq(series: str, client=None) -> pd.DataFrame:
+    """Monthly SAAR frame (total/sf/mf24/mf5) from BigQuery, latest vintage
+    per (segment, month) -- the production path."""
+    from google.cloud import bigquery
+
+    client = client or bigquery.Client(project=PROJECT)
+    sql = f"""
+    SELECT observation_month, segment, value
+    FROM `{PROJECT}.census_construction.new_residential_construction`
+    WHERE series = @series AND seasonally_adjusted
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY observation_month, segment ORDER BY ingested_at DESC
+    ) = 1
+    ORDER BY observation_month
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("series", "STRING", series)]
+    )
+    frame = client.query(sql, job_config=job_config).to_dataframe()
+    frame["observation_month"] = pd.to_datetime(frame["observation_month"])
+    wide = frame.pivot(index="observation_month", columns="segment", values="value")
+    wide = wide.rename(
+        columns={"single_family": "sf", "units_2_4": "mf24", "units_5_plus": "mf5"}
+    ).reindex(columns=["total", "sf", "mf24", "mf5"])
+    wide.index.name = "month"
+    return wide.sort_index()
+
+
+def pull_hmi_bq(client=None) -> pd.Series:
+    """National HMI from BigQuery, latest vintage per month."""
+    from google.cloud import bigquery
+
+    client = client or bigquery.Client(project=PROJECT)
+    sql = f"""
+    SELECT observation_month, value
+    FROM `{PROJECT}.nahb_hmi.housing_market_index`
+    WHERE measure = 'hmi'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY observation_month ORDER BY ingested_at DESC) = 1
+    ORDER BY observation_month
+    """
+    frame = client.query(sql).to_dataframe()
+    return pd.Series(
+        frame["value"].to_numpy(dtype=float), index=pd.to_datetime(frame["observation_month"])
+    )
+
+
+def pull_tavg_bq(client=None) -> pd.Series:
+    """Contiguous-US monthly average temperature from BigQuery, latest vintage."""
+    from google.cloud import bigquery
+
+    client = client or bigquery.Client(project=PROJECT)
+    sql = f"""
+    SELECT observation_month, value
+    FROM `{PROJECT}.noaa_climate.climate_at_a_glance`
+    WHERE measure = 'tavg' AND region = 'contiguous_us'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY observation_month ORDER BY ingested_at DESC) = 1
+    ORDER BY observation_month
+    """
+    frame = client.query(sql).to_dataframe()
+    return pd.Series(
+        frame["value"].to_numpy(dtype=float), index=pd.to_datetime(frame["observation_month"])
+    )
+
+
 def pull_panel(cache: str | Path | None = None) -> dict:
     """All raw inputs for the harness, cached as one CSV."""
     if cache is not None and Path(cache).exists():

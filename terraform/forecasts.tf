@@ -513,6 +513,40 @@ module "ism_mfg_forecast" {
   ]
 }
 
+module "new_home_sales_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "census-home-sales-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.census_construction.new_home_sales.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts next month's new home sales (SAAR level + m/m %) ahead of the
+  # New Residential Sales release (~23rd-27th, 10:00 ET) from same-month SF
+  # permits -- the sales sample is permit-drawn and the NRC release lands a
+  # week earlier -- plus the permits/sales level gap and the mean-reverting
+  # own lag. 2010-2026 COVID-masked: m/m RMSE 6.93 vs 8.03 carry-forward
+  # (-14%), direction ~70%. Daily at 11:30 MT; the window self-gates (idles
+  # until the month-M NRC release ~the 17th). Idempotent upsert by
+  # as_of_date; self-bootstraps its table + _current view. Reads + writes
+  # the census_construction dataset (forecast_new_home_sales).
+  schedule          = "30 11 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.census_construction,
+    google_bigquery_dataset_iam_member.runner_census_construction_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

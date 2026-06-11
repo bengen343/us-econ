@@ -664,6 +664,39 @@ module "bea_vehicles" {
   ]
 }
 
+module "census_home_sales" {
+  source = "./modules/cloud_run_job"
+
+  name       = "census-home-sales"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.census_home_sales"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The New Residential Sales release lands ~the 23rd-27th of each month at
+  # 10:00 ET (the exact workday drifts). Cron fires daily at 09:00 MT on days
+  # 23-28; each run re-appends the current workbook contents (append-only,
+  # vintage-stamped into the shared census_construction dataset -- consumers
+  # dedupe by ingested_at), so pre-release days restate the prior vintage and
+  # the post-release run captures the new month + its revisions (the prelim
+  # SA sales estimate revises ~5% on average).
+  schedule          = "0 9 23-28 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.census_construction,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_census_construction_editor,
+  ]
+}
+
 module "census_retail" {
   source = "./modules/cloud_run_job"
 

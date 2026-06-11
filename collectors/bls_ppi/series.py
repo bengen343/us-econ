@@ -59,6 +59,16 @@ COMMODITY_ITEMS: list[tuple[str, str]] = [
 ]
 
 
+# Industry-classification series (PCU + <industry NAICS> + <product code> --
+# full raw IDs; these don't follow the WP-prefix pattern). NSA only.
+# Scheduled passenger air transportation is the month-M PPI input of the
+# core-PCE forecast (forecasts/bea_pce/core_mm) -- PCE sources airfares from
+# the PPI, not the CPI, making it the classic CPI/PCE wedge component.
+INDUSTRY_ITEMS: list[tuple[str, str]] = [
+    ("PCU481111481111", "Scheduled passenger air transportation"),
+]
+
+
 def _build() -> list[PpiSeries]:
     series: list[PpiSeries] = []
     for suffix, description in PPI_ITEMS:
@@ -66,6 +76,8 @@ def _build() -> list[PpiSeries]:
         series.append(PpiSeries(f"{_PREFIX_SA}{suffix}", suffix, description, True))
     for code, description in COMMODITY_ITEMS:
         series.append(PpiSeries(f"WPU{code}", code, description, False))
+    for series_id, description in INDUSTRY_ITEMS:
+        series.append(PpiSeries(series_id, series_id.removeprefix("PCU"), description, False))
     return series
 
 

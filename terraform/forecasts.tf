@@ -437,6 +437,45 @@ module "starts_permits_forecast" {
   ]
 }
 
+module "core_pce_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bea-core-pce-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.bea_pce.core_mm.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts core PCE m/m (DPCCRG) for the next Personal Income release
+  # (~25th-31st of M+1) via the CPI/PPI translation OLS: month-M core CPI +
+  # month-M PPI airfares, both published mid-M+1, weeks before the origin.
+  # 2012-2026 COVID-masked: MAE 0.052pp / RMSE 0.072 vs 0.101 AR(1) and
+  # 0.233 carry-forward. Daily at 10:30 MT (after the morning collectors);
+  # the window self-gates -- between a PCE release and the next month's
+  # CPI/PPI prints the shared model returns None and the job idles.
+  # Idempotent upsert by as_of_date; self-bootstraps its table + _current
+  # view. Reads bea_pce.price_indexes, bls_cpi.cpi_series,
+  # bls_ppi.ppi_series; writes bea_pce.forecast_core_pce.
+  schedule          = "30 10 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bea_pce,
+    google_bigquery_dataset.bls_cpi,
+    google_bigquery_dataset.bls_ppi,
+    google_bigquery_dataset_iam_member.runner_bea_pce_editor,
+    google_bigquery_dataset_iam_member.runner_bls_cpi_editor,
+    google_bigquery_dataset_iam_member.runner_bls_ppi_editor,
+  ]
+}
+
 module "aaa_gasoline_forecast" {
   source = "./modules/cloud_run_job"
 

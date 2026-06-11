@@ -19,6 +19,7 @@ dependencies = [
     "db-dtypes>=1.3",
     "statsmodels>=0.14",  # dynamic factor model in bls_employment.production
     "openpyxl>=3.1.5",  # parse the bundled R-CPI-NTR/ATR seed workbook (bls_ntr)
+    "xlrd>=2.0.1",  # NAHB publishes the HMI history as legacy .xls (nahb_hmi)
 ]
 
 [dependency-groups]

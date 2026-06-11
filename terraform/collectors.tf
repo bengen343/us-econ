@@ -531,6 +531,37 @@ module "census_construction" {
   ]
 }
 
+module "nahb_hmi" {
+  source = "./modules/cloud_run_job"
+
+  name       = "nahb-hmi"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.nahb_hmi"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # The HMI for month M is released ~the 16th of M (occasionally the 15th or
+  # 17th/18th) at 10:00 ET. Cron fires daily at 09:00 MT (11:00 ET) through
+  # that window; each run re-appends the full history workbooks (append-only,
+  # vintage-stamped -- consumers dedupe by ingested_at), so pre-release days
+  # restate the prior vintage and the post-release run captures the new month.
+  schedule          = "0 9 15-18 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.nahb_hmi,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_nahb_hmi_editor,
+  ]
+}
+
 module "market_indexes" {
   source = "./modules/cloud_run_job"
 

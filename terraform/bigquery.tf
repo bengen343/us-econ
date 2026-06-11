@@ -97,6 +97,14 @@ resource "google_bigquery_dataset" "noaa_climate" {
   depends_on = [google_project_service.enabled]
 }
 
+resource "google_bigquery_dataset" "bea_vehicles" {
+  dataset_id  = "bea_vehicles"
+  description = "BEA light-vehicle unit sales (autos + light trucks, SAAR and NSA, 1967+, table unit_sales) from API table U70205S, upserted on series_code/observation_month. Month-M auto input of the retail-sales forecast (preliminary month posts ~2nd business day of M+1)."
+  location    = var.bq_location
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_bigquery_dataset" "census_retail" {
   dataset_id  = "census_retail"
   description = "Census Advance Monthly Retail Trade Survey (MARTS): advance retail & food services sales by kind of business (SA, $M, 1992+, table advance_retail_sales), parsed from the per-NAICS time-series txt files on census.gov (append-only, vintage-stamped -- advance prints are revised by MRTS and re-benchmarked annually)."

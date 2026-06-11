@@ -562,6 +562,40 @@ module "nahb_hmi" {
   ]
 }
 
+module "bea_vehicles" {
+  source = "./modules/cloud_run_job"
+
+  name       = "bea-vehicles"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["collectors.bea_vehicles"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # BEA's U70205S table gets the preliminary month ~the 2nd business day of
+  # M+1 (the supplemental motor-vehicle update) and revisions ~day 20. Cron
+  # fires daily at 08:00 MT on days 2-22: the early runs capture the new
+  # month ahead of the retail-sales forecast's pre-release window (MARTS
+  # ~the 15th-17th), the late ones the day-20 revision. Full-history re-pull,
+  # MERGE upsert on (series_code, observation_month). Requires the free BEA
+  # API key (Secret Manager: bea-api-key).
+  schedule          = "0 8 2-22 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.bea_vehicles,
+    google_storage_bucket_iam_member.runner_raw_writer,
+    google_bigquery_dataset_iam_member.runner_bea_vehicles_editor,
+    google_secret_manager_secret_iam_member.runner_bea_key_accessor,
+  ]
+}
+
 module "census_retail" {
   source = "./modules/cloud_run_job"
 

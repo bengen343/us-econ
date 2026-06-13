@@ -3,6 +3,7 @@ import json
 import logging
 import re
 from datetime import date, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -44,6 +45,10 @@ SCHEMA: list[bigquery.SchemaField] = [
     bigquery.SchemaField("sample_type", "STRING"),
     bigquery.SchemaField("approve_pct", "FLOAT64"),
     bigquery.SchemaField("disapprove_pct", "FLOAT64"),
+    # When RCP posted the poll (the page payload's `updated` field). This is the
+    # release timestamp -- distinct from the survey field dates -- and powers the
+    # forecast's per-pollster release-timing / weekday models.
+    bigquery.SchemaField("release_at", "TIMESTAMP"),
 ]
 
 
@@ -129,9 +134,6 @@ def _find_balanced_array_end(text: str, start: int) -> int | None:
 def _build_rows(polls: list[dict[str, Any]], observation_date: date) -> list[dict]:
     rows: list[dict] = []
     for poll in polls:
-        if poll.get("type") == "rcp_average":
-            continue
-
         pollster = html_lib.unescape((poll.get("pollster") or "").strip())
         if not pollster:
             _log.warning(
@@ -153,9 +155,20 @@ def _build_rows(polls: list[dict[str, Any]], observation_date: date) -> list[dic
                 "sample_type": sample_type,
                 "approve_pct": _parse_float(candidates.get("Approve")),
                 "disapprove_pct": _parse_float(candidates.get("Disapprove")),
+                "release_at": _parse_release(poll.get("updated")),
             }
         )
     return rows
+
+
+def _parse_release(raw: str | None) -> str | None:
+    """Parse RCP's RFC-2822 `updated` posting timestamp into ISO-8601."""
+    if not raw:
+        return None
+    try:
+        return parsedate_to_datetime(raw).isoformat()
+    except (TypeError, ValueError):
+        return None
 
 
 _SAMPLE_RE = re.compile(r"^\s*(\d+)\s*([A-Za-z]+)?\s*$")

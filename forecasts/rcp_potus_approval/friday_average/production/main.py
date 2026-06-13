@@ -81,6 +81,41 @@ def _ensure_table_and_view(client: bigquery.Client) -> None:
     """).result()
 
 
+def _ensure_releases_table_and_view(client: bigquery.Client) -> None:
+    client.query(f"""
+    CREATE TABLE IF NOT EXISTS `{cfg.PROJECT}.{cfg.OUTPUT_RELEASES_TABLE}` (
+      target_friday     DATE      NOT NULL,
+      as_of_date        DATE      NOT NULL,
+      generated_at      TIMESTAMP NOT NULL,
+      horizon_days      INT64,
+      pollster          STRING    NOT NULL,
+      release_prob      FLOAT64,
+      expected_approve  FLOAT64,
+      days_since_last   INT64,
+      in_current_window BOOL,
+      model_version     STRING,
+      run_id            STRING
+    )
+    PARTITION BY target_friday
+    OPTIONS (description = 'Per-pollster probability of releasing a poll on the upcoming '
+      'Friday (and its modeled approve value if it does). One row per house with '
+      'non-trivial probability, per (target_friday, as_of_date, model_version), '
+      'upserted daily alongside the average forecast.')
+    """).result()
+
+    client.query(f"""
+    CREATE OR REPLACE VIEW `{cfg.PROJECT}.{cfg.OUTPUT_RELEASES_CURRENT_VIEW}` AS
+    WITH latest AS (
+      SELECT target_friday, model_version, MAX(as_of_date) AS as_of_date
+      FROM `{cfg.PROJECT}.{cfg.OUTPUT_RELEASES_TABLE}`
+      GROUP BY target_friday, model_version
+    )
+    SELECT r.* FROM `{cfg.PROJECT}.{cfg.OUTPUT_RELEASES_TABLE}` r
+    JOIN latest USING (target_friday, model_version, as_of_date)
+    ORDER BY r.target_friday, r.release_prob DESC
+    """).result()
+
+
 def _upsert(client: bigquery.Client, fc: Forecast, generated_at: datetime, run_id: str) -> None:
     params = [
         bigquery.ScalarQueryParameter("target_friday", "DATE", fc.target_friday),
@@ -116,6 +151,47 @@ def _upsert(client: bigquery.Client, fc: Forecast, generated_at: datetime, run_i
         f"{cfg.PROJECT}.{cfg.OUTPUT_TABLE}",
         job_config=bigquery.LoadJobConfig(write_disposition=bigquery.WriteDisposition.WRITE_APPEND),
     ).result()
+
+
+def _upsert_releases(client: bigquery.Client, fc: Forecast, generated_at: datetime,
+                     run_id: str) -> int:
+    params = [
+        bigquery.ScalarQueryParameter("target_friday", "DATE", fc.target_friday),
+        bigquery.ScalarQueryParameter("as_of_date", "DATE", fc.as_of_date),
+        bigquery.ScalarQueryParameter("model_version", "STRING", fc.model_version),
+    ]
+    client.query(
+        f"""DELETE FROM `{cfg.PROJECT}.{cfg.OUTPUT_RELEASES_TABLE}`
+            WHERE target_friday = @target_friday
+              AND as_of_date = @as_of_date
+              AND model_version = @model_version""",
+        job_config=bigquery.QueryJobConfig(query_parameters=params),
+    ).result()
+    rows = [
+        {
+            "target_friday": fc.target_friday.isoformat(),
+            "as_of_date": fc.as_of_date.isoformat(),
+            "generated_at": generated_at.isoformat(),
+            "horizon_days": fc.horizon_days,
+            "pollster": r.pollster,
+            "release_prob": r.release_prob,
+            "expected_approve": r.expected_approve,
+            "days_since_last": r.days_since_last,
+            "in_current_window": r.in_current_window,
+            "model_version": fc.model_version,
+            "run_id": run_id,
+        }
+        for r in fc.friday_releases
+        if r.release_prob >= cfg.RELEASE_PROB_FLOOR
+    ]
+    if rows:
+        client.load_table_from_json(
+            rows,
+            f"{cfg.PROJECT}.{cfg.OUTPUT_RELEASES_TABLE}",
+            job_config=bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND),
+        ).result()
+    return len(rows)
 
 
 def _run_id() -> str:
@@ -158,6 +234,10 @@ def main() -> None:
         "band": [round(fc.band_lo, 2), round(fc.band_hi, 2)],
         "n_window": fc.n_window,
         "model_version": fc.model_version,
+        "friday_releases": [
+            {"pollster": r.pollster, "p": round(r.release_prob, 2)}
+            for r in fc.friday_releases if r.release_prob >= cfg.RELEASE_PROB_FLOOR
+        ],
     }
     log.info("forecast computed", extra={"extras": audit})
 
@@ -167,9 +247,12 @@ def main() -> None:
         return
 
     _ensure_table_and_view(client)
+    _ensure_releases_table_and_view(client)
     _upsert(client, fc, generated_at, run_id)
-    log.info("forecast row upserted",
-             extra={"extras": {"table": cfg.OUTPUT_TABLE,
+    n_rel = _upsert_releases(client, fc, generated_at, run_id)
+    log.info("forecast rows upserted",
+             extra={"extras": {"table": cfg.OUTPUT_TABLE, "releases_table": cfg.OUTPUT_RELEASES_TABLE,
+                               "n_releases": n_rel,
                                "duration_s": round(time.monotonic() - started, 2), **audit}})
 
 

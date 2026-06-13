@@ -122,7 +122,8 @@
       "WebFetch(domain:arxiv.org)",
       "Bash(./.venv/Scripts/python.exe -)",
       "Bash(mkdir -p collectors/bls_cpi_weights/data)",
-      "Bash(cp \"cpi-relative-importance.xlsx\" collectors/bls_cpi_weights/data/)"
+      "Bash(cp \"cpi-relative-importance.xlsx\" collectors/bls_cpi_weights/data/)",
+      "PowerShell(Add-Content *)"
     ]
   }
 }

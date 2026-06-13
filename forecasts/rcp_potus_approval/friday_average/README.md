@@ -1,9 +1,12 @@
 # RCP Friday approval-average forecast
 
-Forecasts the **RealClearPolitics presidential-approval average** (the `approve`
-figure) for the **upcoming Friday**. The forecast is made daily Sat → Thu and
-refined each day as the week's polls land, so a given Friday is forecast six
-times at horizons **h = 6 (prior Sat) … h = 1 (Thu)**.
+Two outputs for the **upcoming Friday**, made daily Sat → Thu and refined each day
+as the week's polls land (so a given Friday is forecast six times at horizons
+**h = 6 (prior Sat) … h = 1 (Thu)**):
+
+1. **The RealClearPolitics presidential-approval average** (the `approve` figure).
+2. **Which polling houses will release a poll on that Friday** — a per-pollster
+   release probability (`forecast_friday_releases`).
 
 ## What we're forecasting, and why it's tractable
 
@@ -91,6 +94,37 @@ captures at a fixed 09:00 MT daily, so live targets are cleaner — and the BQ
 `rcp_average` row the collector records each Friday **is** the production target,
 so the backtest measures exactly the live objective.
 
+## Friday-release prediction
+
+For each polling house, the model also reports **P(it releases a poll on the target
+Friday)** — read directly off the same Monte-Carlo: the fraction of paths in which
+that house fires on the final (Friday) day. This combines two signals:
+
+- **Cadence / due-ness** — the per-pollster renewal hazard (days since its last
+  release vs its typical gap).
+- **Publish weekday** — houses release on characteristic weekdays (RMG on Fridays,
+  Economist/YouGov on Tue/Wed, CBS on Sundays, Quinnipiac on Wednesdays). The
+  model reweights each house's daily hazard toward its actual publish weekdays,
+  which mostly *suppresses* the wrong ones. This needs clean release dates, so the
+  collector records each poll's `release_at` posting timestamp (the page payload's
+  `updated` field); the model derives the weekday pattern from it.
+
+Walk-forward calibration (predict at the nearest capture origin for each
+capture-day Friday; "actual" = a poll dated that Friday; 920 house-Fridays, base
+rate 0.08), reproduced by `harness.py`:
+
+| predicted P | n | mean predicted | observed release freq |
+|:-----------:|--:|:--------------:|:---------------------:|
+| 0.00–0.05 | 756 | 0.01 | 0.02 |
+| 0.05–0.15 | 62 | 0.08 | 0.05 |
+| 0.15–0.30 | 22 | 0.22 | 0.09 |
+| 0.30–0.50 | 11 | 0.41 | 0.36 |
+| 0.50–0.75 | 20 | 0.64 | 0.60 |
+| 0.75–1.00 | 49 | 0.90 | 0.80 |
+
+Well-calibrated across the range; **Brier skill +50%** vs the base rate. When the
+model flags a house at ≥0.75, it releases that Friday ~80% of the time.
+
 ## Production
 
 [`production/main.py`](production/main.py) runs as a daily Cloud Run Job. It is
@@ -100,14 +134,15 @@ table and writes the forecast table; it never touches realclearpolling.com, so
 
 Each run:
 1. Pulls the snapshot history (read-only) and builds the as-of window, the
-   published-average truth series, and per-pollster release history.
-2. Computes the blend forecast for the upcoming Friday.
-3. Self-bootstraps `rcp_potus_approval.forecast_friday_average` + its
-   `_current` view.
-4. Upserts one row keyed by `(target_friday, as_of_date, model_version)` —
-   idempotent on same-day retry; one new revision row per day as the horizon
-   shrinks. The `_current` view surfaces the latest `as_of_date` per
-   `target_friday`.
+   published-average truth series, and per-pollster release history (including
+   each poll's `release_at` posting timestamp, used for cadence + publish weekday).
+2. Computes the blend forecast and the per-pollster Friday-release probabilities.
+3. Self-bootstraps both output tables + their `_current` views:
+   `forecast_friday_average` (one row per run) and `forecast_friday_releases`
+   (one row per likely house).
+4. Upserts keyed by `(target_friday, as_of_date, model_version)` — idempotent on
+   same-day retry; one new revision per day as the horizon shrinks. Each `_current`
+   view surfaces the latest `as_of_date` per `target_friday`.
 
 On **Fridays the job idles** (the target realises at that morning's capture; the
 next forecast cycle starts Saturday at h = 6). `DRY_RUN=1` computes + logs

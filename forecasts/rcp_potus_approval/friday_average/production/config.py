@@ -16,3 +16,9 @@ PROJECT = "us-econ-51920"
 # Python forecasts' forecast table + _current view convention.
 OUTPUT_TABLE = "rcp_potus_approval.forecast_friday_average"
 OUTPUT_CURRENT_VIEW = "rcp_potus_approval.forecast_friday_average_current"
+
+# Second output: per-pollster probability of releasing a poll on the target
+# Friday (one row per house with non-trivial probability). Same revision keying.
+OUTPUT_RELEASES_TABLE = "rcp_potus_approval.forecast_friday_releases"
+OUTPUT_RELEASES_CURRENT_VIEW = "rcp_potus_approval.forecast_friday_releases_current"
+RELEASE_PROB_FLOOR = 0.02  # don't persist near-zero house rows

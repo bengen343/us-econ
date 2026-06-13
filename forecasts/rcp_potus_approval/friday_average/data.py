@@ -15,11 +15,11 @@ Wayback capture date):
 
   * windows[D]   -> [(pollster, survey_end, approve)]   the poll set on the page at D
   * truth[D]     -> float                                the published average at D
-  * releases[p]  -> sorted [(first_seen, survey_end, approve)]  per-pollster history,
-                    first_seen = first observation_date the poll appears (the live
-                    collector makes this the release date; backfilled history is
-                    coarser but only the impactful weekly/monthly pollsters matter
-                    and their per-cycle cadence survives the coarsening).
+  * releases[p]  -> sorted [(release_date, survey_end, approve)]  per-pollster history.
+                    release_date = the poll's release_at posting date when present
+                    (clean -- powers the cadence gaps AND the release weekday), else
+                    the first observation_date it appears (coarse fallback for the
+                    few historical rows the archive backfill didn't reach).
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def pull_rows(client: bigquery.Client) -> list[dict]:
     sql = f"""
     WITH dedup AS (
       SELECT observation_date, pollster, survey_start, survey_end,
-             approve_pct, disapprove_pct,
+             approve_pct, disapprove_pct, release_at,
              ROW_NUMBER() OVER (
                PARTITION BY observation_date, pollster, survey_start, survey_end
                ORDER BY ingested_at DESC) AS rn
@@ -48,7 +48,7 @@ def pull_rows(client: bigquery.Client) -> list[dict]:
       WHERE observation_date >= DATE('{TERM_START.isoformat()}')
     )
     SELECT observation_date, pollster, survey_start, survey_end,
-           approve_pct, disapprove_pct
+           approve_pct, disapprove_pct, release_at
     FROM dedup
     WHERE rn = 1
     """
@@ -60,6 +60,7 @@ def pull_rows(client: bigquery.Client) -> list[dict]:
                 "pollster": r.pollster,
                 "survey_end": r.survey_end,
                 "approve": float(r.approve_pct) if r.approve_pct is not None else None,
+                "release_date": r.release_at.date() if r.release_at is not None else None,
             }
         )
     return rows
@@ -98,25 +99,29 @@ def build_releases(
     rows: list[dict], truth: dict[date, float]
 ) -> dict[str, list[tuple[date, date, float]]]:
     """Per-pollster release history. One entry per distinct (pollster, survey_end);
-    first_seen = earliest observation_date it appears. House offset is computed by
-    the model from (approve - truth[first_seen])."""
+    release_date = the poll's release_at date if recorded, else the earliest
+    observation_date it appears. House offset is computed by the model from
+    (approve - truth[release_date])."""
     seen: dict[tuple[str, date], dict] = {}
     for r in rows:
         if r["pollster"] == AVERAGE_POLLSTER or r["survey_end"] is None or r["approve"] is None:
             continue
         key = (r["pollster"], r["survey_end"])
         cur = seen.get(key)
-        if cur is None or r["observation_date"] < cur["first_seen"]:
+        if cur is None:
             seen[key] = {
                 "first_seen": r["observation_date"],
+                "release_date": r["release_date"],
                 "survey_end": r["survey_end"],
                 "approve": r["approve"],
             }
+        else:
+            cur["first_seen"] = min(cur["first_seen"], r["observation_date"])
+            cur["release_date"] = cur["release_date"] or r["release_date"]
     out: dict[str, list[tuple[date, date, float]]] = {}
     for (pollster, _end), rec in seen.items():
-        out.setdefault(pollster, []).append(
-            (rec["first_seen"], rec["survey_end"], rec["approve"])
-        )
+        rel = rec["release_date"] or rec["first_seen"]
+        out.setdefault(pollster, []).append((rel, rec["survey_end"], rec["approve"]))
     for v in out.values():
         v.sort()
     return out

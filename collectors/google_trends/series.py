@@ -56,8 +56,8 @@ TERMS: list[TrendsTerm] = [
     # --- AAA Gasoline (gas-price salience + discretionary-driving demand) ---
     TrendsTerm(
         "trends.us.gasoline_topic",
-        "topic", "/m/0gng2",
-        "Knowledge Graph topic 'Gasoline' -- price salience",
+        "topic", "/m/05wy2",
+        "Knowledge Graph topic 'Gasoline' (Fuel) -- price salience",
     ),
     TrendsTerm(
         "trends.us.q_gas_prices",

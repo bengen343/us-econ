@@ -36,6 +36,14 @@ DORMANCY_MULT = 3.0     # a pollster idle > this * median_gap is treated inactiv
 DORMANCY_CAP = 50       # ...but never longer than this many days
 FALLBACK_DUE = 0.7      # geometric-fallback pollsters fire only past this * median_gap
 NOISE_FLOOR = 0.3       # min per-entry value noise sd
+# Release weekday: each house publishes on characteristic weekdays (RMG Fridays,
+# Economist/YouGov Tue/Wed, CBS Sundays). The renewal hazard alone spreads a
+# release across nearby days; this factor reweights the daily hazard toward a
+# house's actual publish weekdays (mostly suppressing the wrong ones). 7*share is
+# relative-to-uniform; smoothed and capped so sparse houses aren't over-confident.
+WEEKDAY_ALPHA = 0.5     # Laplace smoothing on the per-weekday release share
+WEEKDAY_FACTOR_CAP = 2.0
+FIRE_CAP = 0.95         # max per-day release probability after weekday reweighting
 
 # Age-based per-day prune hazard (empirical, _prune_hazard.py over 17mo Wayback).
 PRUNE_HAZARD = [(9, 0.010), (13, 0.020), (17, 0.057), (21, 0.153),
@@ -73,6 +81,7 @@ class Params:
         self.maxgap: dict[str, int] = {}
         self.med_gap: dict[str, float] = {}
         self.last_rel: dict[str, date] = {}
+        self.weekday_factor: dict[str, list[float]] = {}
         self.active: set[str] = set()
         self.noise_sd = 1.0
         resid = []
@@ -83,6 +92,14 @@ class Params:
             self.last_rel[pollster] = past[-1][0]
             offs = [v - truth[r] for (r, e, v) in past if r in truth]
             self.house_offset[pollster] = statistics.mean(offs) if offs else 0.0
+            wd = [0] * 7
+            for (r, e, v) in past:
+                wd[r.weekday()] += 1
+            tot = len(past)
+            self.weekday_factor[pollster] = [
+                min(7.0 * (wd[w] + WEEKDAY_ALPHA) / (tot + 7 * WEEKDAY_ALPHA), WEEKDAY_FACTOR_CAP)
+                for w in range(7)
+            ]
             gaps = [(past[i][0] - past[i - 1][0]).days for i in range(1, len(past))]
             gaps = [g for g in gaps if g >= 1]
             if len(gaps) >= 3:
@@ -102,18 +119,22 @@ class Params:
         if len(resid) > 5:
             self.noise_sd = max(statistics.pstdev(resid), NOISE_FLOOR)
 
-    def release_p(self, pollster: str, days_since: int) -> float:
+    def release_p(self, pollster: str, days_since: int, weekday: int) -> float:
         if days_since < 1:
             return 0.0
         haz = self.hazard.get(pollster)
         if haz is not None:
             if days_since in haz:
-                return haz[days_since]
-            return 0.6 if days_since > self.maxgap.get(pollster, 0) else 0.0
-        g = self.med_gap.get(pollster, 28.0)
-        if days_since < FALLBACK_DUE * g:
+                base = haz[days_since]
+            else:
+                base = 0.6 if days_since > self.maxgap.get(pollster, 0) else 0.0
+        else:
+            g = self.med_gap.get(pollster, 28.0)
+            base = 0.0 if days_since < FALLBACK_DUE * g else min(1.5 / g, 0.5)
+        if base <= 0.0:
             return 0.0
-        return min(1.5 / g, 0.5)
+        wf = self.weekday_factor.get(pollster, [1.0] * 7)[weekday]
+        return min(base * wf, FIRE_CAP)
 
 
 def local_drift(truth: dict, D: date, win: int = DRIFT_WIN) -> float:
@@ -126,13 +147,19 @@ def local_drift(truth: dict, D: date, win: int = DRIFT_WIN) -> float:
 
 
 def simulate(D, F, window, params, drift, n_sims=N_SIMS, use_drift=False, rng=None):
-    """Monte-Carlo the window forward from D to F; return (mean, samples)."""
+    """Monte-Carlo the window forward from D to F.
+
+    Returns (mean, samples, friday_release_counts) where friday_release_counts[p]
+    is the number of paths in which pollster p released a poll on the final day F
+    (i.e. P(p releases on the target Friday) = count / n_sims).
+    """
     rng = rng or random
     L_D = params.A_D
     horizon = (F - D).days
     base = [(pl, end, val) for (pl, end, val) in window]
     movers = params.active | {pl for (pl, e, v) in base}
     preds = []
+    fri_releases: dict[str, int] = {}
     for _ in range(n_sims):
         win = [[pl, end, val] for (pl, end, val) in base]
         last_rel = dict(params.last_rel)
@@ -141,23 +168,35 @@ def simulate(D, F, window, params, drift, n_sims=N_SIMS, use_drift=False, rng=No
                 last_rel[pl] = end
         for step in range(1, horizon + 1):
             t = D + timedelta(days=step)
+            is_final = step == horizon
             L_t = L_D + (drift * step if use_drift else 0.0)
             for pl in movers:
                 lr = last_rel.get(pl)
                 if lr is None:
                     continue
-                if rng.random() < params.release_p(pl, (t - lr).days):
+                if rng.random() < params.release_p(pl, (t - lr).days, t.weekday()):
                     val = L_t + params.house_offset.get(pl, 0.0) + rng.gauss(0, params.noise_sd)
                     win = [row for row in win if row[0] != pl]
                     win.append([pl, t - timedelta(days=1), val])
                     last_rel[pl] = t - timedelta(days=1)
+                    if is_final:
+                        fri_releases[pl] = fri_releases.get(pl, 0) + 1
             newest = {}
             for row in win:
                 newest[row[0]] = max(newest.get(row[0], row[1]), row[1])
             win = [row for row in win
                    if not (row[1] == newest[row[0]] and rng.random() < prune_p((t - row[1]).days))]
         preds.append(statistics.mean(r[2] for r in win))
-    return statistics.mean(preds), preds
+    return statistics.mean(preds), preds, fri_releases
+
+
+@dataclass
+class PollsterRelease:
+    pollster: str
+    release_prob: float        # P(a new poll from this house appears on the target Friday)
+    expected_approve: float    # modeled approve value if it releases (level + house offset)
+    days_since_last: int       # days from its last seen poll to the target Friday
+    in_current_window: bool    # already on the page as of the origin
 
 
 @dataclass
@@ -174,6 +213,7 @@ class Forecast:
     band_lo: float             # 10th pct of structural sim
     band_hi: float             # 90th pct
     n_window: int
+    friday_releases: list = field(default_factory=list)  # [PollsterRelease], desc by prob
     model_version: str = MODEL_VERSION
     components: dict = field(default_factory=dict)
 
@@ -193,7 +233,7 @@ def forecast(windows, truth, releases, as_of: date, target_friday: date,
     drift = local_drift(truth, D)
     rng = random.Random(seed) if seed is not None else random
 
-    m_nd, preds = simulate(D, target_friday, windows[D], params, drift, n_sims=n_sims, rng=rng)
+    m_nd, preds, fri = simulate(D, target_friday, windows[D], params, drift, n_sims=n_sims, rng=rng)
     cf = truth[D]
     cfd = cf + 0.5 * drift * h
     wc = carry_weight(h)
@@ -201,7 +241,25 @@ def forecast(windows, truth, releases, as_of: date, target_friday: date,
     preds_sorted = sorted(preds)
     lo = preds_sorted[int(0.1 * len(preds_sorted))]
     hi = preds_sorted[int(0.9 * len(preds_sorted))]
+
+    window_pollsters = {pl for (pl, e, v) in windows[D]}
+    releases_out = []
+    for pl in params.active | window_pollsters:
+        prob = fri.get(pl, 0) / n_sims
+        if prob <= 0.0:
+            continue
+        releases_out.append(PollsterRelease(
+            pollster=pl,
+            release_prob=prob,
+            expected_approve=cf + params.house_offset.get(pl, 0.0),
+            days_since_last=(target_friday - params.last_rel[pl]).days
+            if pl in params.last_rel else None,
+            in_current_window=pl in window_pollsters,
+        ))
+    releases_out.sort(key=lambda r: -r.release_prob)
+
     return Forecast(
+        friday_releases=releases_out,
         target_friday=target_friday,
         as_of_date=D,
         horizon_days=h,

@@ -583,3 +583,43 @@ module "aaa_gasoline_forecast" {
     google_bigquery_dataset_iam_member.runner_energy_futures_editor,
   ]
 }
+
+module "rcp_approval_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "rcp-approval-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.rcp_potus_approval.friday_average.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the RCP presidential-approval average for the upcoming Friday, made
+  # daily Sat..Thu (horizon h=6..1) and refined as the week's polls land. The
+  # blend = drift-corrected carry-forward (dominant at short horizons -- the
+  # average is near a random walk day to day) fading into a structural poll-window
+  # Monte-Carlo (replacement + age-based pruning + per-pollster renewal release
+  # hazards) that earns its keep at h>=4. 2nd-term backtest: h-avg RMSE 0.433 vs
+  # 0.439 carry-forward, biggest win at h=6 (-7%), and roughly halves carry's
+  # downward-drift bias at every horizon (see README).
+  #
+  # BigQuery-only (never touches RCP), so it runs on Cloud Run even though the
+  # collector is off-platform. The off-platform collector captures the page at
+  # 09:00 MT; we fire at 10:00 MT daily so today's window has landed. The job
+  # gates in code to the Sat..Thu window (idles Fridays, when the target realises
+  # at the morning capture). Idempotent upsert by (target_friday, as_of_date);
+  # self-bootstraps its table + _current view. Reads + writes rcp_potus_approval.
+  schedule          = "0 10 * * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.rcp_potus_approval,
+    google_bigquery_dataset_iam_member.runner_rcp_potus_approval_editor,
+  ]
+}

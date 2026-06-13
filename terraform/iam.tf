@@ -46,6 +46,17 @@ resource "google_bigquery_dataset_iam_member" "runner_aaa_gasoline_editor" {
   member     = "serviceAccount:${google_service_account.runner.email}"
 }
 
+# The rcp_potus_approval collector runs off-platform (RCP 403s GCP egress), so
+# the dataset intentionally has no runner WRITE binding for collection. The
+# Friday-average forecast Cloud Run Job, however, is BigQuery-only (reads the
+# snapshot table, writes the forecast table in the same dataset) and runs on
+# Cloud Run, so it needs dataEditor here.
+resource "google_bigquery_dataset_iam_member" "runner_rcp_potus_approval_editor" {
+  dataset_id = google_bigquery_dataset.rcp_potus_approval.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.runner.email}"
+}
+
 resource "google_bigquery_dataset_iam_member" "runner_google_trends_viewer" {
   dataset_id = google_bigquery_dataset.google_trends.dataset_id
   role       = "roles/bigquery.dataViewer"

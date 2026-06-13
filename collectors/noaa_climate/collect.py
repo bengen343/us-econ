@@ -58,7 +58,11 @@ SCHEMA: list[bigquery.SchemaField] = [
 
 def collect(settings: Settings) -> LoadSpec:
     rows: list[dict] = []
-    with client(timeout=120.0) as http:
+    # NCEI's CAG host is reachable in seconds from a normal IP but stalls from
+    # Cloud Run egress (a connect-level hang, not slowness). A short timeout +
+    # few retries fail fast and surface the real exception in the logs rather
+    # than the worker being silently killed at the 300s task cap.
+    with client(timeout=30.0) as http:
         for measure, units in MEASURES.items():
             url = URL_FMT.format(measure=measure, end_year=date.today().year)
 
@@ -67,7 +71,7 @@ def collect(settings: Settings) -> LoadSpec:
                 response.raise_for_status()
                 return response.text
 
-            text = with_retries(call)
+            text = with_retries(call, attempts=2)
             measure_rows = _parse_csv(text, measure, units)
             rows.extend(measure_rows)
             _log.info(

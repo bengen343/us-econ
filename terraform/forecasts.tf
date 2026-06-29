@@ -623,3 +623,48 @@ module "rcp_approval_forecast" {
     google_bigquery_dataset_iam_member.runner_rcp_potus_approval_editor,
   ]
 }
+
+module "challenger_job_cuts_forecast" {
+  source = "./modules/cloud_run_job"
+
+  name       = "challenger-job-cuts-forecast"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.challenger_employment.production"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # Forecasts the about-to-be-released Challenger headline (announced job cuts,
+  # persons NSA + m/m change) from a seasonal-dummy + AR(1) + indicator ensemble
+  # (ISM mfg employment, initial claims, Conf-Board labor differential, Michigan
+  # sentiment), with a seasonal+AR(1) fallback before the surveys land. The
+  # release is the first Thursday at 07:30 ET (05:30 MT); the Challenger
+  # collector loads it that morning. We fire every day in the first week at
+  # 05:00 MT, re-running each day so the nowcast firms up as the month's
+  # indicators arrive -- ISM employment (the tightest input) lands on the first
+  # business day, ~1 day before the release, flipping the model from fallback to
+  # the full ensemble. Idempotent upsert by as_of_date; self-bootstraps its
+  # table + _current view. Reads challenger_employment/claims/ism/
+  # conference_board/michigan_sentiment, writes challenger_employment.
+  schedule          = "0 5 1-7 * *"
+  schedule_timezone = "America/Denver"
+  timeout           = "300s"
+  memory            = "512Mi"
+  cpu               = "1"
+
+  depends_on = [
+    google_bigquery_dataset.challenger_employment,
+    google_bigquery_dataset.claims,
+    google_bigquery_dataset.ism,
+    google_bigquery_dataset.conference_board,
+    google_bigquery_dataset.michigan_sentiment,
+    google_bigquery_dataset_iam_member.runner_challenger_employment_editor,
+    google_bigquery_dataset_iam_member.runner_claims_editor,
+    google_bigquery_dataset_iam_member.runner_ism_editor,
+    google_bigquery_dataset_iam_member.runner_conference_board_editor,
+    google_bigquery_dataset_iam_member.runner_michigan_sentiment_editor,
+  ]
+}

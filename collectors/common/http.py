@@ -8,11 +8,18 @@ T = TypeVar("T")
 
 USER_AGENT = "us-econ-collector/0.1 (+https://github.com/)"
 
+# Some hosts (e.g. pmi.spglobal.com) now 403 any non-browser User-Agent. Pass
+# this to client(user_agent=...) for those endpoints.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
 
-def client(timeout: float = 60.0) -> httpx.Client:
+
+def client(timeout: float = 60.0, user_agent: str = USER_AGENT) -> httpx.Client:
     return httpx.Client(
         timeout=timeout,
-        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        headers={"User-Agent": user_agent, "Accept": "application/json"},
         follow_redirects=True,
     )
 

@@ -6,7 +6,7 @@ import httpx
 from google.cloud import bigquery
 
 from collectors.common import LoadSpec, Settings
-from collectors.common.http import client, with_retries
+from collectors.common.http import BROWSER_USER_AGENT, client, with_retries
 from collectors.sp_global_pmi.parser import parse_release
 
 _log = logging.getLogger(__name__)
@@ -14,7 +14,8 @@ _log = logging.getLogger(__name__)
 # pmi.spglobal.com publishes each release as a PDF behind a stable hash URL,
 # discovered from the public "PMI releases" listing (newest-first). The vendor's
 # own marketing pages (spglobal.com/marketintelligence) gate automated fetches
-# with 403s; this public PMI newsroom does not.
+# with 403s; the PMI newsroom now does too for non-browser User-Agents, so we
+# fetch it with a browser UA (BROWSER_USER_AGENT).
 LISTING = "https://www.pmi.spglobal.com/Public/Release/PressReleases?language=en"
 PRESS_BASE = "https://www.pmi.spglobal.com/Public/Home/PressRelease/"
 # Lives in the shared `ism` dataset alongside ism.report_on_business — both are
@@ -69,7 +70,7 @@ _MONTHS = {
 def collect(settings: Settings) -> LoadSpec:
     today = date.today()
     rows: list[dict] = []
-    with client() as http:
+    with client(user_agent=BROWSER_USER_AGENT) as http:
         listing = _get(http, LISTING, "text/html")
         entries = _parse_listing(listing)
         for title, release_type in REPORTS:

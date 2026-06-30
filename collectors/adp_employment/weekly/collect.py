@@ -14,6 +14,11 @@ _log = logging.getLogger(__name__)
 
 TABLE = "adp_employment.weekly_preliminary"
 MEDIA_CENTER_URL = "https://mediacenter.adp.com/workforce-data-releases"
+# The landing page is JS-rendered and its static HTML lags (it can omit the most
+# recent release — e.g. the 2026-06-23 estimate was live in the RSS feed while
+# the static page still topped out at 2026-06-16). The machine-readable RSS feed
+# is current, so we discover from it first and fall back to the landing page.
+RSS_FEED_URL = "https://mediacenter.adp.com/press-releases?pagetemplate=rss"
 
 MEASURE = "weekly_employment_change_4wk_ma"
 DESCRIPTION = (
@@ -26,8 +31,10 @@ SEASONAL_ADJUSTMENT = "sa"
 # Preliminary release URL pattern. The leading date is the publication date;
 # the rest of the slug describes the data week, but we don't parse the slug
 # (we use the URL date as vintage and parse the table for week-ending dates).
+# The slug excludes '<' so the pattern stays bounded inside RSS <link>...</link>
+# elements as well as HTML href="..." attributes.
 _PRELIM_URL_RE = re.compile(
-    r"https?://mediacenter\.adp\.com/(\d{4})-(\d{2})-(\d{2})-ADP-National-Employment-Report-Preliminary-Estimate-[^\"'\s]+"
+    r"https?://mediacenter\.adp\.com/(\d{4})-(\d{2})-(\d{2})-ADP-National-Employment-Report-Preliminary-Estimate-[^\"'\s<]+"
 )
 
 SCHEMA: list[bigquery.SchemaField] = [
@@ -66,19 +73,62 @@ def collect(settings: Settings) -> LoadSpec:
 
 
 def _discover_latest_preliminary(http: httpx.Client) -> _Release:
+    """Newest 'Preliminary Estimate' release across the RSS feed and landing page.
+
+    The static landing page can lag the live RSS feed by a release, so we gather
+    candidate URLs from both sources and pick the max-dated one. A single source
+    failing (feed format change, page outage) is logged but doesn't abort
+    discovery as long as the other yields a release.
+    """
+    releases: dict[date, str] = {}
+    for fetch in (_fetch_rss, _fetch_landing_page):
+        try:
+            text = fetch(http)
+        except Exception as exc:  # noqa: BLE001 - one source down shouldn't break the other
+            _log.warning(
+                "ADP release-discovery source failed",
+                extra={"extras": {"source": fetch.__name__, "error": str(exc)}},
+            )
+            continue
+        for match in _PRELIM_URL_RE.finditer(text):
+            year, month, day = (int(g) for g in match.groups())
+            try:
+                vintage = date(year, month, day)
+            except ValueError:
+                continue
+            releases.setdefault(vintage, match.group(0))
+
+    if not releases:
+        raise RuntimeError(
+            "could not find a preliminary-estimate release URL in the ADP RSS feed "
+            "or on the workforce data releases page"
+        )
+    latest = max(releases)
+    _log.info(
+        "discovered latest ADP preliminary release",
+        extra={"extras": {"vintage_date": latest.isoformat(), "candidates": len(releases)}},
+    )
+    return _Release(url=releases[latest], vintage_date=latest)
+
+
+def _fetch_rss(http: httpx.Client) -> str:
+    def call() -> str:
+        response = http.get(
+            RSS_FEED_URL, headers={"Accept": "application/rss+xml, text/xml, */*"}
+        )
+        response.raise_for_status()
+        return response.text
+
+    return with_retries(call)
+
+
+def _fetch_landing_page(http: httpx.Client) -> str:
     def call() -> str:
         response = http.get(MEDIA_CENTER_URL, headers={"Accept": "text/html"})
         response.raise_for_status()
         return response.text
 
-    html = with_retries(call)
-    match = _PRELIM_URL_RE.search(html)
-    if match is None:
-        raise RuntimeError(
-            "could not find a preliminary-estimate release URL on the workforce data releases page"
-        )
-    year, month, day = (int(g) for g in match.groups())
-    return _Release(url=match.group(0), vintage_date=date(year, month, day))
+    return with_retries(call)
 
 
 def _fetch_page(http: httpx.Client, url: str) -> str:

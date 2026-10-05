@@ -1,11 +1,11 @@
 import csv
 import io
 import logging
-import re
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import httpx
+from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
 from collectors.common import LoadSpec, Settings
@@ -15,16 +15,14 @@ _log = logging.getLogger(__name__)
 
 TABLE = "adp_employment.ner_history"
 ARTIFACT_URL_TEMPLATE = "https://adpemploymentreport.com/artifacts/us_ner/{date}/ADP_NER_history.zip"
-MEDIA_CENTER_URL = "https://mediacenter.adp.com/workforce-data-releases"
 CSV_FILENAME = "ADP_NER_history.csv"
 
-# Latest non-preliminary monthly NER press release URL on the media center.
-# URLs look like:
-#   /2026-05-06-ADP-National-Employment-Report-Private-Sector-Employment-...
-# We exclude any URL containing "Preliminary".
-_MONTHLY_RELEASE_URL_RE = re.compile(
-    r"https?://mediacenter\.adp\.com/(\d{4})-(\d{2})-(\d{2})-ADP-National-Employment-Report-(?!Preliminary)[^\"'\s]+"
-)
+# ADP publishes on the Wednesday before the BLS jobs Friday, which can land in the
+# prior month (e.g. 2026-09-30), so there is no fixed calendar rule. The job runs
+# every Wednesday and probes the artifact URL for each recent date; the newest hit
+# is loaded only if that vintage isn't already in the table. The lookback spans a
+# week plus slack so a release on an off day or a failed run is picked up next week.
+LOOKBACK_DAYS = 10
 
 SCHEMA: list[bigquery.SchemaField] = [
     bigquery.SchemaField("timestep", "STRING", mode="REQUIRED"),  # "M" or "W"
@@ -39,15 +37,22 @@ SCHEMA: list[bigquery.SchemaField] = [
 
 def collect(settings: Settings) -> LoadSpec:
     today = date.today()
-    if not _is_first_wednesday(today):
+    with client() as http:
+        found = _find_latest_artifact(http, today)
+    if found is None:
         _log.info(
-            "skipping non-release weekday",
-            extra={"extras": {"date": today.isoformat(), "weekday": today.strftime("%A")}},
+            "no ADP NER artifact in lookback window; skipping load",
+            extra={"extras": {"date": today.isoformat(), "lookback_days": LOOKBACK_DAYS}},
         )
         return LoadSpec(table=TABLE, schema=SCHEMA, rows=[])
 
-    with client() as http:
-        zip_bytes, vintage = _download_history_zip(http, today)
+    zip_bytes, vintage = found
+    if _vintage_loaded(settings, vintage):
+        _log.info(
+            "latest ADP NER vintage already loaded; skipping load",
+            extra={"extras": {"vintage_date": vintage.isoformat()}},
+        )
+        return LoadSpec(table=TABLE, schema=SCHEMA, rows=[])
 
     csv_text = _extract_csv(zip_bytes)
     rows = _parse_csv(csv_text, vintage)
@@ -59,30 +64,35 @@ def collect(settings: Settings) -> LoadSpec:
     return LoadSpec(table=TABLE, schema=SCHEMA, rows=rows)
 
 
-def _download_history_zip(http: httpx.Client, today: date) -> tuple[bytes, date]:
-    """Try today's date in the artifact URL; fall back to scraping the media center
-    for the latest monthly NER press release date and retrying."""
-    primary_url = ARTIFACT_URL_TEMPLATE.format(date=today.strftime("%Y%m%d"))
-    primary = _try_get(http, primary_url)
-    if primary is not None:
-        return primary, today
+def _find_latest_artifact(http: httpx.Client, today: date) -> tuple[bytes, date] | None:
+    """Newest history zip published in the last LOOKBACK_DAYS days, with its date."""
+    for offset in range(LOOKBACK_DAYS + 1):
+        candidate = today - timedelta(days=offset)
+        body = _try_get(http, ARTIFACT_URL_TEMPLATE.format(date=candidate.strftime("%Y%m%d")))
+        if body is not None:
+            return body, candidate
+    return None
 
-    _log.warning(
-        "primary artifact URL not found; scraping media center for latest release date",
-        extra={"extras": {"primary_url": primary_url}},
+
+def _vintage_loaded(settings: Settings, vintage: date) -> bool:
+    bq = bigquery.Client(project=settings.project_id, location=settings.bq_location)
+    job = bq.query(
+        f"SELECT 1 FROM `{settings.project_id}.{TABLE}` WHERE vintage_date = @vintage LIMIT 1",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("vintage", "DATE", vintage)]
+        ),
     )
-    fallback_date = _discover_latest_release_date(http)
-    fallback_url = ARTIFACT_URL_TEMPLATE.format(date=fallback_date.strftime("%Y%m%d"))
-    fallback = _try_get(http, fallback_url)
-    if fallback is None:
-        raise RuntimeError(
-            f"ADP NER artifact not found at primary {primary_url!r} or fallback {fallback_url!r}"
-        )
-    return fallback, fallback_date
+    try:
+        return any(True for _ in job.result())
+    except NotFound:
+        return False
 
 
 def _try_get(http: httpx.Client, url: str) -> bytes | None:
-    """Return body bytes on 200, None on 404, raise on other errors."""
+    """Return zip bytes if published, None if not, raise on other errors.
+
+    Unpublished dates come back as a 404 or, currently, as a 200 HTML page, so a
+    body without the zip magic number also counts as not published."""
 
     def call() -> httpx.Response:
         response = http.get(url, headers={"Accept": "application/zip"})
@@ -93,25 +103,9 @@ def _try_get(http: httpx.Client, url: str) -> bytes | None:
         return response
 
     response = with_retries(call)
-    if response.status_code == 404:
+    if response.status_code == 404 or not response.content.startswith(b"PK\x03\x04"):
         return None
     return response.content
-
-
-def _discover_latest_release_date(http: httpx.Client) -> date:
-    def call() -> str:
-        response = http.get(MEDIA_CENTER_URL, headers={"Accept": "text/html"})
-        response.raise_for_status()
-        return response.text
-
-    html = with_retries(call)
-    match = _MONTHLY_RELEASE_URL_RE.search(html)
-    if match is None:
-        raise RuntimeError(
-            "could not find a monthly ADP NER release URL on media center page"
-        )
-    year, month, day = (int(g) for g in match.groups())
-    return date(year, month, day)
 
 
 def _extract_csv(zip_bytes: bytes) -> str:
@@ -170,6 +164,3 @@ def _parse_float(raw: str | None) -> float | None:
     except ValueError:
         return None
 
-
-def _is_first_wednesday(d: date) -> bool:
-    return d.weekday() == 2 and d.day <= 7

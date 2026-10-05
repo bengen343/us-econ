@@ -97,9 +97,11 @@ _FINAL_PRIOR_RE = re.compile(
 # "...Index fell in February, decreasing to 51.7 from 52.7 ...": month, then
 # "to <current> from <prior>". Only tried when _FINAL_CURRENT_RE misses; the
 # prior is accepted under the same month-before-current guard in _parse_final.
+# Also covers "...Index improved for the fourth successive month in September,
+# rising to 58.8 from a reading of 56.5 in August" (2026-10-05 release).
 _FINAL_ALT_RE = re.compile(
-    rf"Index[\w\s,'’\-]{{0,40}}?in\s+({_MONTHS_ALT})[\w\s,'’\-]{{0,40}}?"
-    rf"to\s+{_DEC}\s+from\s+{_DEC}",
+    rf"Index[\w\s,'’\-]{{0,60}}?in\s+({_MONTHS_ALT})[\w\s,'’\-]{{0,40}}?"
+    rf"to\s+{_DEC}\s+from\s+(?:a\s+reading\s+of\s+)?{_DEC}",
     re.IGNORECASE,
 )
 

@@ -646,11 +646,12 @@ module "bea_vehicles" {
   # BEA's U70205S table gets month M with the "Supplemental Estimates, Motor
   # Vehicles" update ~the 25th of M+1 (verified 2026-06: the start-of-month
   # auto-sales-day cadence is long gone -- early-month SAARs are private
-  # estimators, not BEA). Cron fires daily at 08:00 MT on days 24-28 to
-  # capture that update. Full-history re-pull, MERGE upsert on (series_code,
-  # observation_month). Requires the free BEA API key (Secret Manager:
-  # bea-api-key).
-  schedule          = "0 8 24-28 * *"
+  # estimators, not BEA). The update can slip past the 28th (August 2026 data
+  # landed 2026-09-30), so cron fires daily at 08:00 MT on days 24-31 and 1-3
+  # to capture it. Full-history re-pull, MERGE upsert on (series_code,
+  # observation_month), so extra runs are harmless. Requires the free BEA API
+  # key (Secret Manager: bea-api-key).
+  schedule          = "0 8 24-31,1-3 * *"
   schedule_timezone = "America/Denver"
   timeout           = "300s"
   memory            = "512Mi"

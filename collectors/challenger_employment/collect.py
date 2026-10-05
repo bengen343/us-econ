@@ -18,10 +18,11 @@ CUT_REASONS_TABLE = "challenger_employment.cut_reasons"
 QUARTERLY_TABLE = "challenger_employment.quarterly"
 
 # First post link on the blog category page that targets a /blog/<slug>/ URL.
-# The category-listing links (.../blog/category/...) and the page's own canonical
+# The category-listing links (.../blog/category/...), pagination links
+# (<link rel="next" href=".../blog/page/2/"> in <head>) and the page's own canonical
 # self-links are excluded. The first match in document order is the latest post.
 _POST_LINK_RE = re.compile(
-    r'https://www\.challengergray\.com/blog/(?!category/)[a-z0-9-]+/'
+    r'https://www\.challengergray\.com/blog/(?!category/|page/)[a-z0-9-]+/'
 )
 # PDF asset URL inside a post's "Download the Full Report" button.
 _PDF_LINK_RE = re.compile(

@@ -80,6 +80,7 @@ def _discover_latest_preliminary(http: httpx.Client) -> _Release:
     failing (feed format change, page outage) is logged but doesn't abort
     discovery as long as the other yields a release.
     """
+    today = date.today()
     releases: dict[date, str] = {}
     for fetch in (_fetch_rss, _fetch_landing_page):
         try:
@@ -95,6 +96,15 @@ def _discover_latest_preliminary(http: httpx.Client) -> _Release:
             try:
                 vintage = date(year, month, day)
             except ValueError:
+                continue
+            # ADP has published at least one mistyped slug (the 2026-07-21 release
+            # lives at /2027-07-21-...). A future date would win max() every week
+            # and mask the real latest release, so skip it.
+            if vintage > today:
+                _log.warning(
+                    "ignoring future-dated ADP release URL",
+                    extra={"extras": {"url": match.group(0)}},
+                )
                 continue
             releases.setdefault(vintage, match.group(0))
 

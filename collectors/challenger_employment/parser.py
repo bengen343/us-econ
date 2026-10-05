@@ -86,10 +86,12 @@ def parse_report(pdf_bytes: bytes) -> ParseResult:
                 monthly_rows.extend(_parse_table3_state(page, report_month))
             if "JOB CUTS BY REASON" in text:
                 cut_reasons_rows.extend(_parse_table4_reasons(page, report_month))
-            if "QUARTER BY QUARTER" in text:
+            # Title/subtitle casing and hyphenation changed with the 2026 redesign
+            # ("QUARTER BY QUARTER" -> "QUARTER-BY-QUARTER", "By Month" -> "BY MONTH").
+            if re.search(r"QUARTER[- ]BY[- ]QUARTER", text):
                 quarterly_rows.extend(_parse_table5_quarterly(page))
             if "ANNOUNCED HIRING PLANS" in text:
-                if "By Month" in text:
+                if "BY MONTH" in text.upper():
                     monthly_rows.extend(_parse_table6_hiring_total(page, report_month))
                 else:
                     monthly_rows.extend(_parse_table7_hiring_industry(page, report_month))
@@ -158,6 +160,13 @@ def _group_words_into_rows(words: list[dict], y_tol: float = 3.0) -> list[list[d
     for row in rows:
         row.sort(key=lambda w: w["x0"])
     return rows
+
+
+def _is_footer(label: str) -> bool:
+    """Below-table lines: the source note and, from the 2026 redesign on, a page
+    footer ('Challenger Report | September 2026 | Page 6') whose page number would
+    otherwise land in a monthly column."""
+    return label.startswith("Source:") or label.startswith("Challenger Report |")
 
 
 def _split_label_and_numbers(row_words: list[dict]) -> tuple[str, list[tuple[float, str]]]:
@@ -282,8 +291,13 @@ def _parse_table2_industry(page, report_month: date) -> list[dict]:
     words = page.extract_words()
     rows = _group_words_into_rows(words)
 
-    # Header row contains a token like '25-Mar' / '26-Feb' / '26-Mar'.
-    yy_mon_re = re.compile(r"^\d{2}-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$")
+    # Header row contains tokens like '25-Mar' / '26-Feb' / '26-Mar' (through July
+    # 2026), then month-first in either case: 'AUG-25' (August 2026), 'Sep-25'.
+    yy_mon_re = re.compile(
+        r"^(\d{2}-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2})$",
+        re.IGNORECASE,
+    )
     header_idx = None
     monthly_columns: list[tuple[date, float]] = []  # (observation_month, x_center)
     for i, row in enumerate(rows):
@@ -303,7 +317,7 @@ def _parse_table2_industry(page, report_month: date) -> list[dict]:
     out: list[dict] = []
     for row in rows[header_idx + 1:]:
         label, numbers = _split_label_and_numbers(row)
-        if not label or label.upper().startswith("TOTAL") or label.startswith("Source:"):
+        if not label or label.upper().startswith("TOTAL") or _is_footer(label):
             continue
         cells = _assign_to_columns(numbers, centers)
         for cell, obs in zip(cells, obs_months, strict=False):
@@ -325,6 +339,9 @@ _COLUMN_GAP = 100.0
 # left of its header so state names are captured, while the prior column's number
 # columns (which end well right of its own header) stay excluded.
 _NAME_INDENT = 50.0
+# Vertical reach (y-units) around a region header that still counts as header:
+# stacked 'YTD' / '<yr>' labels sit ~6-7 above/below it, the first state row 20+.
+_HEADER_BAND = 12.0
 
 
 def _parse_table3_state(page, report_month: date) -> list[dict]:
@@ -377,14 +394,28 @@ def _parse_table3_state(page, report_month: date) -> list[dict]:
         else:
             columns.append([h])
 
-    # Column x-boundaries. A boundary sits just left of the right column's state
-    # names (header left edge minus the name indent) so that the left column's
-    # number columns — which extend well right of the left header, into the gap —
-    # are not pulled into the right column. The leftmost column starts at 0.
+    # Column x-boundaries. A boundary sits just right of where the left column's
+    # header ends (its 'YTD <yr>' label, which the number columns right-align to;
+    # some layouts stack 'YTD' / '<yr>' on lines just above and below the region
+    # name, hence the vertical band), so the left column's numbers stay out of the
+    # right column whether the
+    # right column's state names are indented left of their header (older layouts)
+    # or flush with it (2026 redesign, where header-minus-indent cut into the left
+    # column's YTD numbers and dropped side-by-side rows). Falls back to
+    # header-minus-indent if no header words are found. The leftmost column starts at 0.
     bounds = [0.0]
-    for right_col in columns[1:]:
+    for left_col, right_col in zip(columns, columns[1:], strict=False):
         right_edge = min(h["left_x"] for h in right_col)
-        bounds.append(right_edge - _NAME_INDENT)
+        left_header_ends = [
+            w["x1"]
+            for h in left_col
+            for w in words
+            if abs(w["top"] - h["top"]) <= _HEADER_BAND and w["x1"] < right_edge
+        ]
+        if left_header_ends:
+            bounds.append(min(max(left_header_ends) + 2.0, right_edge))
+        else:
+            bounds.append(right_edge - _NAME_INDENT)
     bounds.append(float("inf"))
 
     out: list[dict] = []
@@ -438,7 +469,7 @@ def _parse_table4_reasons(page, report_month: date) -> list[dict]:
     out: list[dict] = []
     for row in rows[header_idx + 1:]:
         label, numbers = _split_label_and_numbers(row)
-        if not label or label.upper() == "TOTAL" or label.startswith("Source:"):
+        if not label or label.upper() == "TOTAL" or _is_footer(label):
             continue
         cells = _assign_to_columns(numbers, [monthly_x], tolerance=40.0)
         cell = cells[0]
@@ -538,6 +569,10 @@ def _parse_table6_hiring_total(page, report_month: date) -> list[dict]:
 
 # ---------- Table 7: hiring by industry ----------
 
+_YY_MON = r"^\d{2}-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$"
+_MON_YY = r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2}$"
+
+
 def _parse_table7_hiring_industry(page, report_month: date) -> list[dict]:
     """Columns: ``Industry | 26-Mar | YTD 2026 | YTD 2025`` (per the March 2026 sample).
     Keep only the 26-Mar monthly column."""
@@ -549,9 +584,9 @@ def _parse_table7_hiring_industry(page, report_month: date) -> list[dict]:
     for i, row in enumerate(rows):
         for w in row:
             text = w["text"]
-            # Either '26-Mar' (Table 7 March 2026) or 'Mar-26' (other formats); accept both.
-            if re.match(r"^\d{2}-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$", text) or \
-               re.match(r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2}$", text):
+            # Either '26-Mar' (Table 7 March 2026) or 'Mar-26' / 'AUG-26' (other
+            # formats); accept both, in any case.
+            if re.match(_YY_MON, text, re.I) or re.match(_MON_YY, text, re.I):
                 monthly_x = (w["x0"] + w["x1"]) / 2
                 header_idx = i
                 break
@@ -563,7 +598,7 @@ def _parse_table7_hiring_industry(page, report_month: date) -> list[dict]:
     out: list[dict] = []
     for row in rows[header_idx + 1:]:
         label, numbers = _split_label_and_numbers(row)
-        if not label or label.upper() == "TOTAL" or label.startswith("Source:") \
+        if not label or label.upper() == "TOTAL" or _is_footer(label) \
                 or label.upper().startswith("INDUSTRY"):
             continue
         cells = _assign_to_columns(numbers, [monthly_x], tolerance=40.0)
@@ -601,8 +636,11 @@ def _monthly_row(
 
 
 def _parse_yy_mon(text: str, current_year: int) -> date:
-    """Parse '25-Mar' or '26-Feb' to a date. Year inferred from current_year's century."""
+    """Parse '25-Mar', 'Mar-25' or 'MAR-25' to a date. Year inferred from current_year's century."""
     yy, mon = text.split("-")
+    if not yy.isdigit():
+        yy, mon = mon, yy
+    mon = mon.title()
     century = (current_year // 100) * 100
     year = century + int(yy)
     return date(year, _MONTH_ABBR[mon], 1)

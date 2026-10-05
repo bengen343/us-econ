@@ -11,11 +11,14 @@ gasoline price program was discontinued in 2022-03. CL=F/BZ=F complement EIA's
 daily WTI/Brent *spot* (RWTC/RBRTE in eia_petroleum.prices) with same-day-
 settling *futures* that carry forward-looking information.
 
-Yahoo is best-effort: occasional gaps, and the in-progress trading day is
-returned with a provisional (non-final) close. Like eia_petroleum this re-pulls
-full history on every run and UPSERTs on (ticker, observation_date), so a
-provisional close is overwritten by the settled value on the next run and the
-table stays one-row-per-ticker-date.
+Yahoo is best-effort: occasional gaps, and the in-progress trading day comes
+back with a non-null but unusable "close" (for RB=F it averaged ~16c/gal below
+the eventual settle in 2026 and was usually below the day's own final low), so
+bars dated today or later in the exchange timezone are dropped -- the table only
+ever holds settled days. Like eia_petroleum this re-pulls full history on every
+run and UPSERTs on (ticker, observation_date), so each day lands (and any late
+revision is picked up) on the run after it settles, and the table stays
+one-row-per-ticker-date.
 """
 
 import logging
@@ -108,6 +111,8 @@ def _rows(result: dict, ticker: str, name: str) -> list[dict]:
     meta = result.get("meta") or {}
     tz = ZoneInfo(meta.get("exchangeTimezoneName") or "America/New_York")
     currency = meta.get("currency")
+    # The collector runs before the settle, so today's bar is still in progress.
+    today = datetime.now(tz).date().isoformat()
 
     timestamps = result.get("timestamp") or []
     quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
@@ -125,8 +130,10 @@ def _rows(result: dict, ticker: str, name: str) -> list[dict]:
     for i, ts in enumerate(timestamps):
         close = closes[i] if i < len(closes) else None
         if close is None:
-            continue  # skip the provisional in-progress bar that has no close yet
+            continue  # no close at all (gap / not yet trading)
         obs_date = datetime.fromtimestamp(ts, tz).date().isoformat()
+        if obs_date >= today:
+            continue  # unsettled: its "close" is a provisional quote, not a settle
         volume = volumes[i] if i < len(volumes) else None
         by_date[obs_date] = {
             "ticker": ticker,

@@ -15,6 +15,7 @@ spot + crude spot + weekly supply fundamentals).
 from __future__ import annotations
 
 import pandas as pd
+from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
 PROJECT = "us-econ-51920"
@@ -139,3 +140,39 @@ def pull_supply_weekly(client: bigquery.Client | None = None) -> pd.DataFrame:
     wide.index = pd.to_datetime(wide.index)
     wide.columns.name = None
     return wide.sort_index()
+
+
+def pull_live_errors(
+    model_version: str,
+    before: pd.Timestamp,
+    client: bigquery.Client | None = None,
+) -> pd.Series:
+    """Scored live errors (forecast - actual AAA regular, $/gal) of one production
+    model, for forecasts made before ``before``; indexed by as_of_date. Empty if
+    the forecast table doesn't exist yet."""
+    client = client or _client()
+    sql = f"""
+    WITH actual AS (
+      SELECT observation_date, ARRAY_AGG(price_usd_per_gallon
+                                         ORDER BY ingested_at DESC LIMIT 1)[OFFSET(0)] AS price
+      FROM `{PROJECT}.aaa_gasoline.daily`
+      WHERE grade = 'Regular'
+      GROUP BY observation_date
+    )
+    SELECT f.as_of_date, f.forecast_value - a.price AS err
+    FROM `{PROJECT}.aaa_gasoline.forecast_regular` f
+    JOIN actual a ON a.observation_date = f.target_date
+    WHERE f.model_version = @mv AND f.as_of_date < @before
+    ORDER BY f.as_of_date
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("mv", "STRING", model_version),
+            bigquery.ScalarQueryParameter("before", "DATE", before.date()),
+        ]
+    )
+    try:
+        df = client.query(sql, job_config=job_config).to_dataframe()
+    except NotFound:
+        return pd.Series(dtype=float)
+    return pd.Series(df["err"].to_numpy(dtype=float), index=pd.to_datetime(df["as_of_date"]))

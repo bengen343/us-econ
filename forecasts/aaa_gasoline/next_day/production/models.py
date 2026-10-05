@@ -1,25 +1,32 @@
-"""Compute the production AAA next-day forecasts (both model versions).
+"""Compute the production AAA next-day forecasts (both active model versions).
 
-Read-only. Fits the cointegration + short-run ECM on the long EIA weekly retail
-history (AAA's analog) and applies it to the latest AAA level + latest RBOB
-settle to produce one-day-ahead AAA regular forecasts, per the hybrid design in
-the research harness:
+Read-only. Builds the point-in-time daily panel (``..daily``): for every AAA day,
+the seasonal-EC ECM (fit on the long EIA weekly retail history, AAA's analog) is
+evaluated at that day's AAA level and the last settled RBOB, alongside AAA
+momentum and RBOB daily changes. The latest row feeds both models:
 
-* ``ecm_sym_rbob_v1``: pure ECM, daily step = expected weekly move / 5.
-* ``ecm_seas_mom_v1``: seasonal-EC ECM drift blended with the latest AAA
+* ``ecm_seas_mom_v1``: the row's ECM step blended with the latest AAA
   day-over-day change (see ``config`` for the rationale and weights).
+* ``daily_ar_rbob_v1``: a regression of next-day AAA change on the panel's
+  features, fit on every earlier day with a known outcome.
+
+Inputs are restricted to data dated before the as_of (AAA) date, so the morning
+run never reads an unsettled same-day RBOB quote. Each model's predictive
+distribution is a Student-t whose sd is the RMSE of that model's own
+out-of-sample daily errors.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 import pandas as pd
 from google.cloud import bigquery
 
-from forecasts.aaa_gasoline.next_day import data, model
+from forecasts.aaa_gasoline.next_day import daily, data, model
 from forecasts.aaa_gasoline.next_day.harness import build_weekly_panel
 from forecasts.aaa_gasoline.next_day.production import config as cfg
 
@@ -59,14 +66,25 @@ def _aaa_momentum(aaa: pd.Series) -> float | None:
     return float(aaa.iloc[-1] - aaa.iloc[-2]) / gap_days
 
 
+def _rmse_sigma(errors: pd.Series, fallback: float, model_version: str) -> float:
+    """RMSE of out-of-sample errors once SIGMA_MIN_ERRORS exist, else `fallback`."""
+    errors = errors.dropna()
+    if len(errors) < cfg.SIGMA_MIN_ERRORS:
+        _log.warning(
+            "too few scored errors for a calibrated sigma; using weekly-ECM fallback",
+            extra={"extras": {"model_version": model_version, "n_errors": len(errors)}},
+        )
+        return fallback
+    return float(math.sqrt(float((errors**2).mean())))
+
+
 def _forecast_row(
-    nd: model.NextDay,
     value: float,
     model_version: str,
-    daily_sigma: float,
-    anchor: float,
-    rbob: float,
+    sigma: float,
+    last: pd.Series,
     as_of: date,
+    n_train: int,
 ) -> Forecast:
     return Forecast(
         target=cfg.TARGET,
@@ -75,49 +93,50 @@ def _forecast_row(
         horizon_days=1,
         value=value,
         value_rounded=round(value, 3),
-        anchor_price=anchor,
-        rbob_price=rbob,
-        equilibrium_price=nd.equilibrium,
-        expected_weekly_move=nd.weekly_move,
-        sigma_daily=daily_sigma,
+        anchor_price=float(last["anchor"]),
+        rbob_price=float(last["rbob"]),
+        equilibrium_price=float(last["equilibrium"]),
+        expected_weekly_move=float(last["weekly_move"]),
+        sigma_daily=sigma,
         distribution=model.predictive_distribution(
-            value, daily_sigma, cfg.DIST_BUCKET_WIDTH, cfg.DIST_SPAN_SIGMAS
+            value, sigma, cfg.DIST_BUCKET_WIDTH, cfg.DIST_SPAN_SIGMAS, df=cfg.DIST_T_DF
         ),
         model_version=model_version,
         units=cfg.UNITS,
-        n_train=nd.n_train,
+        n_train=n_train,
     )
 
 
 def compute(client: bigquery.Client) -> list[Forecast]:
-    """Return the next-day AAA regular forecasts (one row per model version),
-    or [] if inputs are not yet available."""
+    """Return the next-day AAA regular forecasts (one row per active model
+    version), or [] if inputs are not yet available."""
     eia_retail = data.pull_eia_retail_weekly(client)
     futures = data.pull_futures_daily(client)
     aaa = data.pull_aaa_regular(client)
-
-    rbob_daily = futures["rbob"].dropna() if "rbob" in futures else futures.iloc[:0]
-    if aaa.empty or rbob_daily.empty or eia_retail.empty:
+    if aaa.empty or futures.empty or eia_retail.empty:
         return []
 
-    panel = build_weekly_panel(eia_retail, futures)
-    if panel.empty:
+    as_of_ts = pd.Timestamp(aaa.index[-1])
+    as_of = as_of_ts.date()
+    spec_b = next(s for s in model.SPECS if s.name == cfg.SPEC_NAME_BLEND)
+    panel = daily.build_panel(aaa, futures, eia_retail, spec_b, cfg.TRADING_DAYS_PER_WEEK)
+    if panel.empty or panel.index[-1] != as_of_ts:
+        _log.warning("no daily panel row for the as_of date; skipping")
         return []
+    last = panel.iloc[-1]
 
-    anchor = float(aaa.iloc[-1])
-    as_of = aaa.index[-1].date()
-    rbob = float(rbob_daily.iloc[-1])
-    sigma_start = pd.Timestamp(cfg.SIGMA_TEST_START)
-
-    # ---- v1: pure symmetric ECM, weekly move / 5 --------------------------- #
-    spec = next(s for s in model.SPECS if s.name == cfg.SPEC_NAME)
-    nd = model.next_day_forecast(panel, spec, anchor, rbob, cfg.TRADING_DAYS_PER_WEEK)
-    _, daily_sigma = model.forecast_error_sigma(
-        panel, spec, sigma_start, cfg.TRADING_DAYS_PER_WEEK
+    # Cold-start fallback sigma: the weekly-ECM walk-forward estimate, on the same
+    # point-in-time inputs as the panel's latest row.
+    cutoff = as_of_ts - pd.Timedelta(days=1)
+    eia_retail.index = pd.to_datetime(eia_retail.index)
+    weekly = build_weekly_panel(
+        eia_retail[eia_retail.index <= cutoff], futures[futures.index <= cutoff]
     )
-    forecasts = [
-        _forecast_row(nd, nd.next_day, cfg.MODEL_VERSION, daily_sigma, anchor, rbob, as_of)
-    ]
+    _, fallback_sigma = model.forecast_error_sigma(
+        weekly, spec_b, pd.Timestamp(cfg.SIGMA_TEST_START), cfg.TRADING_DAYS_PER_WEEK
+    )
+
+    forecasts: list[Forecast] = []
 
     # ---- v2: seasonal-EC ECM drift blended with daily AAA momentum --------- #
     momentum = _aaa_momentum(aaa)
@@ -126,29 +145,68 @@ def compute(client: bigquery.Client) -> list[Forecast]:
             "blend model skipped: no usable AAA momentum",
             extra={"extras": {"model_version": cfg.MODEL_VERSION_BLEND, "n_aaa": len(aaa)}},
         )
-        return forecasts
+    else:
+        value_b = (
+            float(last["anchor"])
+            + cfg.ECM_WEIGHT * float(last["ecm_step"])
+            + cfg.MOMENTUM_WEIGHT * momentum
+        )
+        sigma_b = _rmse_sigma(
+            data.pull_live_errors(cfg.MODEL_VERSION_BLEND, as_of_ts, client),
+            fallback_sigma,
+            cfg.MODEL_VERSION_BLEND,
+        )
+        _log.info(
+            "blend components",
+            extra={
+                "extras": {
+                    "model_version": cfg.MODEL_VERSION_BLEND,
+                    "ecm_step": round(float(last["ecm_step"]), 4),
+                    "momentum": round(momentum, 4),
+                    "equilibrium_seasonal": round(float(last["equilibrium"]), 3),
+                    "sigma": round(sigma_b, 4),
+                }
+            },
+        )
+        forecasts.append(
+            _forecast_row(
+                value_b, cfg.MODEL_VERSION_BLEND, sigma_b, last, as_of, int(last["n_weekly"])
+            )
+        )
 
-    spec_b = next(s for s in model.SPECS if s.name == cfg.SPEC_NAME_BLEND)
-    nd_b = model.next_day_forecast(
-        panel, spec_b, anchor, rbob, cfg.TRADING_DAYS_PER_WEEK, as_of_month=as_of.month
-    )
-    ecm_step = nd_b.weekly_move / cfg.TRADING_DAYS_PER_WEEK
-    value_b = anchor + cfg.ECM_WEIGHT * ecm_step + cfg.MOMENTUM_WEIGHT * momentum
-    _, daily_sigma_b = model.forecast_error_sigma(
-        panel, spec_b, sigma_start, cfg.TRADING_DAYS_PER_WEEK
-    )
-    _log.info(
-        "blend components",
-        extra={
-            "extras": {
-                "model_version": cfg.MODEL_VERSION_BLEND,
-                "ecm_step": round(ecm_step, 4),
-                "momentum": round(momentum, 4),
-                "equilibrium_seasonal": round(nd_b.equilibrium, 3),
-            }
-        },
-    )
-    forecasts.append(
-        _forecast_row(nd_b, value_b, cfg.MODEL_VERSION_BLEND, daily_sigma_b, anchor, rbob, as_of)
-    )
+    # ---- v3: daily regression on AAA's own history -------------------------- #
+    n_train = daily.n_train(panel)
+    if last[daily.FEATURES].isna().any() or n_train < daily.MIN_TRAIN:
+        _log.warning(
+            "daily model skipped: incomplete features or too little history",
+            extra={
+                "extras": {
+                    "model_version": cfg.MODEL_VERSION_DAILY,
+                    "n_train": n_train,
+                    "missing": [f for f in daily.FEATURES if pd.isna(last[f])],
+                }
+            },
+        )
+    else:
+        coef = daily.fit(panel)
+        x = last[daily.FEATURES].to_numpy(dtype=float)
+        value_d = float(last["anchor"]) + float(x @ coef)
+        sigma_d = _rmse_sigma(daily.pit_errors(panel), fallback_sigma, cfg.MODEL_VERSION_DAILY)
+        _log.info(
+            "daily model components",
+            extra={
+                "extras": {
+                    "model_version": cfg.MODEL_VERSION_DAILY,
+                    "coef": dict(zip(daily.FEATURES, coef.round(4).tolist(), strict=True)),
+                    "features": dict(zip(daily.FEATURES, x.round(4).tolist(), strict=True)),
+                    "n_train": n_train,
+                    "sigma": round(sigma_d, 4),
+                }
+            },
+        )
+        forecasts.append(
+            _forecast_row(value_d, cfg.MODEL_VERSION_DAILY, sigma_d, last, as_of, n_train)
+        )
+
     return forecasts
+

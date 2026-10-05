@@ -4,15 +4,17 @@ Runs daily after the AAA scrape and the RBOB/WTI futures + EIA price collectors
 land. Flow:
 
   1. Pull inputs from BigQuery (read-only) and compute the next-day AAA regular
-     forecasts: the symmetric RBOB ECM (ecm_sym_rbob_v1) and the seasonal-EC +
-     daily-momentum blend (ecm_seas_mom_v1), one row each per run.
+     forecasts: the seasonal-EC + daily-momentum blend (ecm_seas_mom_v1) and the
+     daily regression on AAA's own history (daily_ar_rbob_v1), one row each per
+     run (the retired ecm_sym_rbob_v1 keeps its history in the table).
   2. Ensure the output table + _current view exist.
   3. Upsert this run's row keyed by as_of_date (idempotent on same-day retry; a
      new row per data date preserves the forecast trajectory for later backtest).
-     The _current view surfaces the latest generation per (target, model_version).
+     The _current views surface the latest generation per (target, model_version)
+     for the active model versions only.
 
 There is no release-window gate -- this is a daily forecast that simply re-runs
-each day against the freshest AAA anchor and RBOB settle. Set DRY_RUN=1 to compute
+each day against the freshest AAA anchor and the last settled RBOB. Set DRY_RUN=1 to compute
 + log without writing (local validation; per repo convention forecasts write
 BigQuery only from the deployed Job).
 """
@@ -30,6 +32,17 @@ from collectors.common.config import Settings
 from collectors.common.logging import configure_logging
 from forecasts.aaa_gasoline.next_day.production import config as cfg
 from forecasts.aaa_gasoline.next_day.production import models
+
+_DIST_DESCRIPTION = (
+    "Next-day AAA regular predictive distribution: half-cent probability bands "
+    "(Student-t centered on the point forecast, sd = the model's out-of-sample "
+    "error RMSE; Gaussian before 2026-10). One row per band per (target, as_of_date, "
+    "model_version), upserted daily."
+)
+
+
+def _active_versions_sql() -> str:
+    return ", ".join(f"'{v}'" for v in cfg.ACTIVE_MODEL_VERSIONS)
 
 
 def _ensure_table_and_view(client: bigquery.Client) -> None:
@@ -53,9 +66,8 @@ def _ensure_table_and_view(client: bigquery.Client) -> None:
       run_id               STRING
     )
     PARTITION BY target_date
-    OPTIONS (description = 'AAA national-average regular next-day (h=1) forecast from '
-      'the symmetric RBOB error-correction model; one row per (target, as_of_date, '
-      'model_version), upserted daily.')
+    OPTIONS (description = 'AAA national-average regular next-day (h=1) forecasts; '
+      'one row per (target, as_of_date, model_version), upserted daily.')
     """).result()
     # forecast_sigma was added after the table first shipped; no-op once present.
     client.query(
@@ -70,6 +82,7 @@ def _ensure_table_and_view(client: bigquery.Client) -> None:
                   PARTITION BY target, model_version
                   ORDER BY as_of_date DESC, generated_at DESC) AS rn
       FROM `{cfg.PROJECT}.{cfg.OUTPUT_TABLE}`
+      WHERE model_version IN ({_active_versions_sql()})
     ) WHERE rn = 1
     """).result()
 
@@ -91,16 +104,20 @@ def _ensure_dist_table_and_view(client: bigquery.Client) -> None:
       run_id         STRING
     )
     PARTITION BY target_date
-    OPTIONS (description = 'Next-day AAA regular predictive distribution: half-cent '
-      'probability bands (Gaussian, centered on the point forecast). One row per band '
-      'per (target, as_of_date, model_version), upserted daily.')
+    OPTIONS (description = {_DIST_DESCRIPTION!r})
     """).result()
+    # Bands switched from Gaussian to Student-t in 2026-10; keep the description current.
+    client.query(
+        f"ALTER TABLE `{cfg.PROJECT}.{cfg.OUTPUT_DIST_TABLE}` "
+        f"SET OPTIONS (description = {_DIST_DESCRIPTION!r})"
+    ).result()
 
     client.query(f"""
     CREATE OR REPLACE VIEW `{cfg.PROJECT}.{cfg.OUTPUT_DIST_CURRENT_VIEW}` AS
     WITH latest AS (
       SELECT target, model_version, MAX(as_of_date) AS as_of_date
       FROM `{cfg.PROJECT}.{cfg.OUTPUT_DIST_TABLE}`
+      WHERE model_version IN ({_active_versions_sql()})
       GROUP BY target, model_version
     )
     SELECT d.* FROM `{cfg.PROJECT}.{cfg.OUTPUT_DIST_TABLE}` d

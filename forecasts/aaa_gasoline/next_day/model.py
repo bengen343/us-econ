@@ -275,18 +275,28 @@ def predictive_distribution(
     sigma: float,
     width: float = 0.005,
     span_sigmas: float = 4.0,
+    df: float | None = None,
 ) -> list[DistBucket]:
-    """Gaussian predictive distribution centered at `point`, discretized into
-    `width`-wide bands (default 0.5 cent) snapped to a clean `width` grid and
-    spanning +/- `span_sigmas`. Bucket prob = Phi(high) - Phi(low); at 4 sigma the
-    mass outside the grid is ~0.006%, so the bands effectively sum to 1."""
+    """Predictive distribution centered at `point`, discretized into `width`-wide
+    bands (default 0.5 cent) snapped to a clean `width` grid and spanning
+    +/- `span_sigmas`. Bucket prob = F(high) - F(low).
+
+    Gaussian by default. With `df`, a Student-t with that many degrees of freedom
+    whose standard deviation is `sigma` (scale = sigma * sqrt((df-2)/df), df > 2):
+    daily AAA errors are fat-tailed (excess kurtosis ~6 on 2026 live data), and a
+    t(4) scored materially better than the Gaussian. The t leaves more mass
+    beyond the grid (~0.5% at 4 sigma for df=4), so its bands sum to just under 1.
+    """
     if sigma <= 0:
         return []
     lo = math.floor((point - span_sigmas * sigma) / width) * width
     hi = math.ceil((point + span_sigmas * sigma) / width) * width
     n = int(round((hi - lo) / width))
     edges = [round(lo + i * width, 6) for i in range(n + 1)]
-    cdf = norm.cdf(edges, loc=point, scale=sigma)
+    if df is None:
+        cdf = norm.cdf(edges, loc=point, scale=sigma)
+    else:
+        cdf = t_dist.cdf(edges, df, loc=point, scale=sigma * math.sqrt((df - 2) / df))
     return [
         DistBucket(
             low=edges[i],

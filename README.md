@@ -142,9 +142,34 @@ If any of these sources ever stops blocking GCP, the path back to Cloud Run is j
 
 [`realclearpolling.com`](https://www.realclearpolling.com) returns `403 Forbidden` to GCP egress. Code at [collectors/rcp_potus_approval/](collectors/rcp_potus_approval/), dataset `rcp_potus_approval`. Invoked once per day at 09:00 MT.
 
-### `google_trends`
+### `google_trends` — RETIRED 2026-10-26
 
-`trends.google.com` consistently returns `400` to GCP egress (Google blocks Trends scraping from its own cloud). Code at [collectors/google_trends/](collectors/google_trends/), dataset `google_trends`. Invoked weekly Thursdays at ~06:00 MT, just before the claims collector lands the new release — so the freshest Trends snapshot is available to the claims forecast Scheduled Query. The collector re-pulls a 5-yr weekly window on every run (Trends' relative renormalization rules that out being incremental); each run is vintage-stamped and append-only, so downstream consumers pick the latest vintage per week.
+**Not collecting. Do not assume this data is current.** The table
+`google_trends.weekly` stops at week ending **2026-07-18**; the off-platform
+host that invoked it stopped in July 2026 and is not being restored. Keeping it
+alive would mean permanently tying a production input to a single desktop, and
+its only dedicated consumer — the initial-claims direction forecast — has been
+suspended for unrelated accuracy reasons (see
+[forecasts/claims/initial_claims/README.md](forecasts/claims/initial_claims/README.md)).
+
+What is deliberately retained, and why:
+
+- **The dataset and its history** (`google_trends`, 11 series, 2021-05 → 2026-07).
+  Still provisioned in [terraform/bigquery.tf](terraform/bigquery.tf).
+- **The runner's `dataViewer` binding** in [terraform/iam.tf](terraform/iam.tf).
+  `bls-employment-forecast` calls `data.pull_trends()` on every run and would
+  fail without it — even though no production NFP/UR spec currently selects the
+  trends feature group. Revoking that binding breaks a live forecast.
+- **The collector code** at [collectors/google_trends/](collectors/google_trends/).
+  It still works from a residential IP; it simply has nothing invoking it.
+
+`trends.google.com` consistently returns `400` to GCP egress (Google blocks
+Trends scraping from its own cloud), which is why this was never a Cloud Run
+Job and why resuming it would require an off-platform host or a paid API.
+Anything consuming this dataset must treat it as a **frozen historical
+snapshot**: features derived from it go `NaN` for any week after 2026-07-18,
+and model code that trains on populated rows and predicts on empty ones will
+degrade silently rather than fail.
 
 ## Local development
 

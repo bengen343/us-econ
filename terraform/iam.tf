@@ -57,6 +57,12 @@ resource "google_bigquery_dataset_iam_member" "runner_rcp_potus_approval_editor"
   member     = "serviceAccount:${google_service_account.runner.email}"
 }
 
+# Collection into this dataset is retired (see README "Off-platform
+# collectors"), and its original consumer -- the suspended initial-claims
+# direction job -- is gone. This binding still has to stay: the live
+# `bls-employment-forecast` job calls `data.pull_trends()` on every run and
+# would fail outright without read access, even though no production spec
+# currently selects the trends feature group.
 resource "google_bigquery_dataset_iam_member" "runner_google_trends_viewer" {
   dataset_id = google_bigquery_dataset.google_trends.dataset_id
   role       = "roles/bigquery.dataViewer"

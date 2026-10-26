@@ -51,7 +51,7 @@ resource "google_bigquery_dataset" "rcp_potus_approval" {
 
 resource "google_bigquery_dataset" "google_trends" {
   dataset_id  = "google_trends"
-  description = "Google Trends weekly search-interest indices (full 5-yr re-pull per run, vintage-stamped) -- forecast inputs for claims, gasoline, and other series."
+  description = "Google Trends weekly search-interest indices (vintage-stamped). RETIRED 2026-10-26: collection stopped 2026-07-16 and is not being resumed. Dataset and its history are retained deliberately -- bls-employment-forecast still reads it."
   location    = var.bq_location
 
   depends_on = [google_project_service.enabled]

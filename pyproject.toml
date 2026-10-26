@@ -11,9 +11,15 @@ dependencies = [
     "pdfplumber>=0.11",
     "pytrends>=4.9",
     # Forecast runtime deps — used by forecasts that ship in the same container
-    # image as collectors (claims direction_lgbm; bls_employment.production).
+    # image as collectors (claims bucket_probs; bls_employment.production;
+    # claims direction_lgbm, currently suspended).
     "pandas>=2.2",
     "numpy>=1.26",
+    # Direct, not transitive: claims.bucket_probs needs scipy.stats.norm, whose
+    # only other path into the image is via lightgbm/scikit-learn/statsmodels.
+    # lightgbm exists solely for the suspended direction model, so a future
+    # cleanup that drops it must not silently break the bucket forecast.
+    "scipy>=1.14",
     "scikit-learn>=1.5",
     "lightgbm>=4.5",
     "db-dtypes>=1.3",

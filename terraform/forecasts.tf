@@ -1,7 +1,8 @@
 # Python-based forecasts run as Cloud Run Jobs in the same container image
-# as the collectors. The SQL-based forecasts (the ARIMA+TimesFM stored
-# procedure called by the `claims_ens_arima_forecast` BigQuery Scheduled
-# Query) are separate and unaffected by anything in this file.
+# as the collectors. The SQL-based claims level forecast (the stored procedure
+# called by the `claims_ens_arima_forecast` BigQuery Scheduled Query -- its
+# champion became TimesFM 2.5 on 2026-10-26, so the name is a misnomer) is
+# separate and unaffected by anything in this file.
 #
 # SUSPENDED 2026-10-26 — `module "direction_lgbm_initial_claims"` (Cloud Run
 # Job `forecast-direction-initial-claims`) was removed from this file. It
@@ -11,6 +12,44 @@
 # 63.6% for a constant "down" call. The Python package is retained at
 # forecasts/claims/initial_claims/direction_lgbm/ -- restoring the module
 # block and re-applying is the whole revival path. See that package's README.
+
+module "claims_bucket_probs" {
+  source = "./modules/cloud_run_job"
+
+  name       = "claims-bucket-probs"
+  project_id = var.project_id
+  region     = var.region
+
+  image = local.image_uri
+  args  = ["forecasts.claims.initial_claims.bucket_probs"]
+  env   = local.collector_env
+
+  service_account_email = google_service_account.runner.email
+
+  # TimesFM 3.0 probability distribution over the 5k buckets Kalshi's
+  # KXJOBLESSCLAIMS contracts are written on. The claims collector lands the
+  # new release Thursday ~12:45 UTC; we fire at 17:15 UTC the same day. The
+  # h=1 target is the NEXT Thursday's print, whose market closes 12:25 UTC that
+  # day -- so this publishes roughly 6.5 days ahead of the close, and no new
+  # claims data arrives in between.
+  #
+  # Self-contained: it runs its own AI.FORECAST rather than reading the level
+  # table, so it has no ordering dependency on the claims_ens_arima_forecast
+  # Scheduled Query. The job hard-fails if fct_sa_input is more than 10 days
+  # stale instead of quietly pricing a market off old data.
+  schedule          = "15 17 * * 4"
+  schedule_timezone = "Etc/UTC"
+
+  # One AI.FORECAST call (~25s) plus trivial arithmetic.
+  timeout = "300s"
+  memory  = "512Mi"
+  cpu     = "1"
+
+  depends_on = [
+    google_bigquery_dataset.claims,
+    google_bigquery_dataset_iam_member.runner_claims_editor,
+  ]
+}
 
 module "adp_headline_pulse_bridge" {
   source = "./modules/cloud_run_job"
